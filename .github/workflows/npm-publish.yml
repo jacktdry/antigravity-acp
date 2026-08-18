@@ -1,11 +1,14 @@
 name: Publish to npm
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Release Binaries"]
+    types:
+      - completed
 
 jobs:
   publish:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write  # Required for OIDC / Trusted Publishing
