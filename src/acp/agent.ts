@@ -304,7 +304,7 @@ export class AgyAcpAgent {
 			this.sessions.adopt(sessionId, session);
 		}
 
-		const rawText = await promptText(params.prompt);
+		const rawText = promptText(params.prompt);
 		const userText = rawPromptText(params.prompt).trim();
 		if (userText === "/usage" || userText.startsWith("/usage ")) {
 			const output = await runNonInteractivePrompt(
@@ -515,14 +515,14 @@ export class AgyAcpAgent {
 /** Write a base64 image to a new temp file readable only by the current user.
  *  The extension comes from the client's mimeType, so only plain alphanumerics
  *  are accepted; anything else could escape the temp dir or alter the prompt. */
-async function writeImage(data: string, mimeType: unknown): Promise<string> {
+function writeImage(data: string, mimeType: unknown): string {
 	const subtype = typeof mimeType === "string" ? mimeType.split("/")[1] : "";
 	const ext = subtype && /^[a-z0-9]{1,10}$/i.test(subtype) ? subtype : "png";
 	const tmpPath = path.join(
 		os.tmpdir(),
 		`agy_acp_img_${crypto.randomUUID()}.${ext}`,
 	);
-	await fs.promises.writeFile(tmpPath, Buffer.from(data, "base64"), {
+	fs.writeFileSync(tmpPath, Buffer.from(data, "base64"), {
 		mode: 0o600,
 		flag: "wx",
 	});
@@ -534,7 +534,7 @@ function escapeAttr(str: string): string {
 }
 
 /** Flatten an ACP prompt (text / resource / context blocks) into a string. */
-async function promptText(prompt: unknown): Promise<string> {
+function promptText(prompt: unknown): string {
 	const blocks = Array.isArray(prompt) ? prompt : [];
 	const parts: string[] = [];
 	for (const block of blocks) {
@@ -574,7 +574,7 @@ async function promptText(prompt: unknown): Promise<string> {
 			// Image — agy only takes text, so write the image to a private temp
 			// file and point the model at it.
 			parts.push(
-				`\n[User attached an image file. Absolute path: ${await writeImage(obj.data, obj.mimeType)}. You must use your view_file tool on this path to see it.]\n`,
+				`\n[User attached an image file. Absolute path: ${writeImage(obj.data, obj.mimeType)}. You must use your view_file tool on this path to see it.]\n`,
 			);
 		} else if (typeof obj.text === "string") {
 			// Fallback: treat any block with a text field as plain text.
