@@ -17,8 +17,7 @@ import type {
 	SetSessionConfigOptionResponse,
 } from "@agentclientprotocol/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
-import { type DiscoveredModel, discoverModels, runNonInteractivePrompt } from "../agy/process";
-import { formatUsageOutput } from "../agy/usage-format";
+import { discoverModels } from "../agy/process";
 import {
 	AUTH_METHOD_ID,
 	AVAILABLE_COMMANDS,
@@ -52,16 +51,11 @@ interface ConfigResult {
 	configOptions: SessionConfigOption[];
 }
 
-const DEFAULT_MODELS: DiscoveredModel[] = [
-	{ value: "gemini-3.6-flash-medium", name: "Gemini 3.6 Flash (Medium)" },
-	{ value: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 (Thinking)" },
-];
-
 export class AgyAcpAgent {
 	private readonly sessions: SessionManager;
 	private readonly adapter: Adapter;
 	private readonly replayCache = new ReplayCache();
-	private availableModels: DiscoveredModel[] = [];
+	private availableModels: string[] = [];
 	// Tracks which AcpClient is serving each session so async updates can be pushed.
 	private readonly activeClients = new Map<string, AcpClient>();
 
@@ -78,21 +72,8 @@ export class AgyAcpAgent {
 			if (fs.existsSync(MODELS_CACHE_FILE)) {
 				const cached = JSON.parse(fs.readFileSync(MODELS_CACHE_FILE, "utf-8"));
 				if (Array.isArray(cached) && cached.length > 0) {
-					// Normalize cached items to DiscoveredModel structure for backwards compatibility with legacy string[] cache files.
-					this.availableModels = cached.map((item: any) =>
-						typeof item === "string" ? { value: item, name: item } : item,
-					);
+					this.availableModels = cached;
 				}
-			}
-		} catch {
-			// ignore
-		}
-
-		// Save initial default models cache if missing
-		try {
-			if (!fs.existsSync(MODELS_CACHE_FILE)) {
-				fs.mkdirSync(STATE_DIR, { recursive: true });
-				fs.writeFileSync(MODELS_CACHE_FILE, JSON.stringify(this.availableModels));
 			}
 		} catch {
 			// ignore
@@ -117,18 +98,6 @@ export class AgyAcpAgent {
 	}
 
 	// --- ACP methods ---------------------------------------------------------
-
-	listModels() {
-		const models = this.availableModels.length > 0 ? this.availableModels : DEFAULT_MODELS;
-		return {
-			models: models.map((m) => ({
-				id: m.value,
-				name: m.name,
-				description: `Google Antigravity ${m.name}`,
-			})),
-			currentModelId: models[0]?.value,
-		};
-	}
 
 	initialize(): InitializeResponse {
 		return {
@@ -302,24 +271,7 @@ export class AgyAcpAgent {
 			this.sessions.adopt(sessionId, session);
 		}
 
-		const rawText = promptText(params.prompt);
-		const userText = rawPromptText(params.prompt).trim();
-		if (userText === "/usage" || userText.startsWith("/usage ")) {
-			const output = await runNonInteractivePrompt(
-				this.config.binary,
-				"/usage",
-				session.cwd,
-			);
-			await client.update(sessionId, {
-				sessionUpdate: "agent_message_chunk",
-				content: {
-					type: "text",
-					text: output ? formatUsageOutput(output) : "No usage data available.",
-				},
-			});
-			return { stopReason: "end_turn" };
-		}
-
+		const rawText = await promptText(params.prompt);
 		const text =
 			session.permissionMode === PLAN_MODE_ID
 				? PLAN_MODE_INJECTION + rawText
@@ -376,6 +328,22 @@ export class AgyAcpAgent {
 		}
 		await this.sessions.persist(sessionId, session);
 		return { configOptions: this.configOptions(session) };
+	}
+
+	/** Standard ACP mode setter (session/set_mode). Clients that speak the
+	 *  spec's native mode-switching call this instead of the SDK-native
+	 *  session/set_config_option path above; agy-acp has only ever tracked
+	 *  mode as a config option, so just forward into that same logic. */
+	async setSessionMode(params: {
+		sessionId?: string;
+		modeId?: string;
+	}): Promise<Record<string, never>> {
+		await this.setConfigOption({
+			sessionId: params.sessionId,
+			configId: MODE_CONFIG_ID,
+			value: params.modeId,
+		});
+		return {};
 	}
 
 	listResources(): Json {
@@ -459,14 +427,14 @@ export class AgyAcpAgent {
 
 		if (models.length > 0) {
 			const currentModel =
-				session.modelId ?? models[0]?.value ?? "gemini-3.6-flash-medium";
+				session.modelId ?? models[0] ?? "Gemini 3.5 Flash (Medium)";
 			options.push({
 				id: MODEL_CONFIG_ID,
 				name: "Model",
 				category: "model",
 				type: "select",
 				currentValue: currentModel,
-				options: models.map((m) => ({ value: m.value, name: m.name })),
+				options: models.map((name) => ({ value: name, name })),
 			});
 		}
 
@@ -515,7 +483,8 @@ function escapeAttr(str: string): string {
 }
 
 /** Flatten an ACP prompt (text / resource / context blocks) into a string. */
-function promptText(prompt: unknown): string {
+async function promptText(prompt: unknown): Promise<string> {
+	await Bun.write("/tmp/last_acp_prompt.json", JSON.stringify(prompt, null, 2));
 	const blocks = Array.isArray(prompt) ? prompt : [];
 	const parts: string[] = [];
 	for (const block of blocks) {
@@ -551,6 +520,17 @@ function promptText(prompt: unknown): string {
 				parts.push(
 					`<embedded_resource uri="${escapeAttr(uri)}">\n${text}\n</embedded_resource>`,
 				);
+		} else if (
+			type === "image" &&
+			typeof obj.data === "string"
+		) {
+			const os = await import("node:os");
+			const path = await import("node:path");
+			const mimeType = (typeof obj.mimeType === "string" ? obj.mimeType : "image/png");
+			const ext = mimeType.split("/")[1] || "png";
+			const tmpPath = path.join(os.tmpdir(), `agy_acp_img_${crypto.randomUUID()}.${ext}`);
+			await Bun.write(tmpPath, Buffer.from(obj.data, "base64"));
+			parts.push(`\n[User attached an image file. Absolute path: ${tmpPath}. You must use your view_file tool on this path to see it.]\n`);
 		} else if (typeof obj.text === "string") {
 			// Fallback: treat any block with a text field as plain text.
 			parts.push(`<user_text>\n${obj.text}\n</user_text>`);
@@ -564,18 +544,4 @@ function stringField(obj: Record<string, unknown>, ...keys: string[]): string {
 		if (typeof obj[key] === "string") return obj[key] as string;
 	}
 	return "";
-}
-
-/** Extract raw user text from ACP prompt blocks without XML tag formatting. */
-function rawPromptText(prompt: unknown): string {
-	const blocks = Array.isArray(prompt) ? prompt : [];
-	const parts: string[] = [];
-	for (const block of blocks) {
-		if (!block || typeof block !== "object") continue;
-		const obj = block as Record<string, unknown>;
-		if (typeof obj.text === "string") {
-			parts.push(obj.text);
-		}
-	}
-	return parts.join("\n").trim();
 }
