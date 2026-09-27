@@ -6,6 +6,7 @@ import {
 	spawnAgy,
 } from "../agy/process";
 import { POLL_INTERVAL_MS } from "../constants";
+import type { ErrorDetails } from "../conversation/columns";
 import { conversationSnapshot } from "../conversation/scan";
 import { StreamPoller } from "../conversation/streaming";
 import type { Session } from "../types/session";
@@ -13,12 +14,44 @@ import type { AcpClient } from "./client";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** agy retries per-minute 429 rate limits itself, so only a longer wait is a
+ *  usage limit worth stopping for. */
+const QUOTA_STOP_MS = 60_000;
+
+/** Milliseconds until the quota resets, from "Resets in 1d2h3m4s", or null. */
+export function resetDelayMs(text: string): number | null {
+	const r = text.match(
+		/Resets in (?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?\.?\s*$/,
+	);
+	if (!r?.slice(1).some(Boolean)) return null;
+	const [d = 0, h = 0, m = 0, s = 0] = r.slice(1).map((n) => Number(n ?? 0));
+	return (((d * 24 + h) * 60 + m) * 60 + s) * 1000;
+}
+
+/** Format agy's 429 text like the Antigravity IDE: the message, its Error ID,
+ *  and the clock time the quota refreshes. */
+export function formatQuotaError(e: ErrorDetails, now = Date.now()): string {
+	const text = e.message || e.detail;
+	// "API error (attempt 1): RESOURCE_EXHAUSTED (code 429): <message> Resets in 7m11s."
+	let message = text.replace(/^.*\(code 429\):\s*/, "");
+	const delay = resetDelayMs(text);
+	let refresh = "";
+	if (delay !== null) {
+		const at = new Date(now + delay).toLocaleString("en-US");
+		message = message.replace(/\s*Resets in .*$/, "");
+		refresh = `Your plan's baseline quota will refresh on ${at}.`;
+	}
+	return [message, e.id && `Error ID: ${e.id}`, refresh]
+		.filter(Boolean)
+		.join("\n\n");
+}
+
 export interface PromptOutcome {
 	stopReason: "end_turn" | "cancelled";
 	conversationId: string | null;
 	lastStepIdx: number;
 	hadUpdates: boolean;
-	/** Set when agy failed to start, or exited non-zero with nothing streamed. */
+	/** Set when agy failed to start, hit a usage limit, or exited non-zero with nothing streamed. */
 	error?: string;
 }
 
@@ -125,10 +158,18 @@ export class Adapter {
 			};
 
 			let polling = true;
+			let quotaError: ErrorDetails | null = null;
 			const loop = (async () => {
 				while (polling) {
 					try {
 						await pollOnce();
+						// agy retries a usage-limit 429 for minutes without exiting; stop it.
+						const e = poller.quotaError;
+						if (e && (resetDelayMs(e.message || e.detail) ?? 0) > QUOTA_STOP_MS) {
+							quotaError = e;
+							this.cancel(sessionId);
+							break;
+						}
 					} catch (err) {
 						console.error(`[agy-acp] poll error: ${(err as Error).message}`);
 					}
@@ -165,7 +206,9 @@ export class Adapter {
 				hadUpdates: poller.hadUpdates,
 			};
 
-			if (!wasCancelled && exitCode !== 0) {
+			if (quotaError) {
+				outcome.error = formatQuotaError(quotaError);
+			} else if (!wasCancelled && exitCode !== 0) {
 				console.error(`[agy-acp] WARN: agy exited with status ${exitCode}`);
 				if (!poller.hadUpdates) {
 					outcome.error =

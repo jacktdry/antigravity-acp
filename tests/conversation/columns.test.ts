@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { BinaryWriter } from "@bufbuild/protobuf/wire";
 import {
 	decodeErrorDetails,
+	decodeErrorMessageStep,
 	decodePermissions,
 	decodeTaskDetails,
 	decodeToolOutput,
@@ -9,6 +10,29 @@ import {
 import { TaskDetails } from "../../src/gen/steps";
 
 describe("conversation/columns", () => {
+	describe("decodeErrorMessageStep", () => {
+		test("extracts the error and its Error ID from step_payload", () => {
+			const writer = new BinaryWriter();
+			// 24: { 3: error_details { 2: detail, 6: id } }
+			writer.tag(24, 2).fork();
+			writer.tag(3, 2).fork();
+			writer.tag(2, 2).string("Individual quota reached.");
+			writer.tag(6, 2).string("error-id-1");
+			writer.join();
+			writer.join();
+
+			const decoded = decodeErrorMessageStep(writer.finish());
+			expect(decoded?.detail).toBe("Individual quota reached.");
+			expect(decoded?.id).toBe("error-id-1");
+		});
+
+		test("returns null when the payload has no error message", () => {
+			const writer = new BinaryWriter();
+			writer.tag(1, 0).uint32(17);
+			expect(decodeErrorMessageStep(writer.finish())).toBeNull();
+		});
+	});
+
 	describe("decodeErrorDetails", () => {
 		test("decodes full error details", () => {
 			const writer = new BinaryWriter();

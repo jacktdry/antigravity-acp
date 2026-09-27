@@ -333,9 +333,8 @@ export class AgyAcpAgent {
 			client,
 		);
 
-		if (outcome.error)
-			throw RequestError.internalError(undefined, outcome.error);
-
+		// Record the steps even when the turn failed, so the next prompt does not
+		// re-read them (e.g. a stale 429 after the quota has reset).
 		if (session.conversationId === null) {
 			session.conversationId = outcome.conversationId;
 		}
@@ -344,6 +343,9 @@ export class AgyAcpAgent {
 			session.updatedAt = new Date().toISOString();
 			await this.sessions.persist(sessionId, session);
 		}
+
+		if (outcome.error)
+			throw RequestError.internalError(undefined, outcome.error);
 
 		return { stopReason: outcome.stopReason };
 	}
