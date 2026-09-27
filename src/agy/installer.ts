@@ -10,7 +10,7 @@ import * as path from "node:path";
 // ── Release configuration ─────────────────────────────────────────────────────
 
 export const GITHUB_REPO = "google-antigravity/antigravity-cli";
-export const AGY_VERSION = "1.0.13";
+export const AGY_VERSION = "1.2.12";
 
 export interface Release {
 	asset: string;
@@ -23,32 +23,32 @@ export interface Release {
 export const RELEASES: Record<string, Release> = {
 	"darwin-arm64": {
 		asset: "agy_cli_mac_arm64.tar.gz",
-		sha256: "c00b3aa10d4eee821f7ddaf3185942c88511ebbe425663692f7732d8dd1e83c2",
+		sha256: "076a1f0a1874a2843862af9d0eeae751775a84e736e35a84de0dd268069c28cb",
 		kind: "tar.gz",
 	},
 	"darwin-x64": {
 		asset: "agy_cli_mac_x64.tar.gz",
-		sha256: "53e23ef3f54d0212df7fc73ea1eb99c34e4c97bffa1f886afe565fd142c9ab89",
+		sha256: "1e2f8ed29c05051c61015041d82a50bd95f754c19c8cc7fa8fe35b9f66c9a075",
 		kind: "tar.gz",
 	},
 	"linux-arm64": {
 		asset: "agy_cli_linux_arm64.tar.gz",
-		sha256: "e2f062ff8a573d2da54c03c8f0b66e130a563a08c87b6db174953a9afdd21235",
+		sha256: "bd338c9d19ab963d9d2bc027e4e797b470ea84bae02080e4fde4555357ea9444",
 		kind: "tar.gz",
 	},
 	"linux-x64": {
 		asset: "agy_cli_linux_x64.tar.gz",
-		sha256: "6bf990458c114af3b3173dcbc1b0fb9ab93bea91c53b605fdd69aedd29a21cd9",
+		sha256: "26c7c4c661d6c9beda734fcf305031056a6ea46e697c4533e8151179724e2950",
 		kind: "tar.gz",
 	},
 	"win32-arm64": {
 		asset: "agy_cli_windows_arm64.zip",
-		sha256: "e6a6fb4c9703cdd51c5d2c107b724e5bc5654a2850c8e1d737ee906ed5facdf8",
+		sha256: "af3fc21f28a64a04bebec8bfcb865517528548b7763293b195c82a3c1c12422f",
 		kind: "zip",
 	},
 	"win32-x64": {
 		asset: "agy_cli_windows_x64.zip",
-		sha256: "ca397c0f07157b6f38a2e11a3c9e97ef56c24ec4238a0deef6a5dd390dee1836",
+		sha256: "4e9d3d7895f71917b224f931ad0418081f9234b43202be019a317a6e2185e386",
 		kind: "zip",
 	},
 };
@@ -56,7 +56,7 @@ export const RELEASES: Record<string, Release> = {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 export function releaseUrl(asset: string): string {
-	return `https://github.com/${GITHUB_REPO}/releases/download/v${AGY_VERSION}/${asset}`;
+	return `https://github.com/${GITHUB_REPO}/releases/download/${AGY_VERSION}/${asset}`;
 }
 
 export function sha256hex(buf: Buffer): string {
@@ -230,7 +230,9 @@ export async function ensureAgy(opts: InstallOptions): Promise<void> {
 			await extractZip(archivePath, extractDir);
 		}
 
-		const found = findBinary(extractDir, exeName);
+		const altExeName = isWin ? "antigravity.exe" : "antigravity";
+		const found =
+			findBinary(extractDir, exeName) ?? findBinary(extractDir, altExeName);
 		if (!found) {
 			warn(
 				`[agy-acp] WARN: could not locate ${exeName} inside ${release.asset}.\n` +
