@@ -24,13 +24,12 @@ import { formatUsageOutput } from "../agy/usage-format";
 import {
 	AUTH_METHOD_ID,
 	AVAILABLE_COMMANDS,
-	BYPASS_MODE_ID,
 	DEFAULT_MODE_ID,
 	MODE_CONFIG_ID,
 	MODEL_CONFIG_ID,
 	MODELS_CACHE_FILE,
 	PLAN_MODE_ID,
-	PLAN_MODE_INJECTION,
+	SANDBOX_CONFIG_ID,
 	STATE_DIR,
 } from "../constants";
 import { ReplayCache } from "../conversation/replay";
@@ -322,14 +321,10 @@ export class AgyAcpAgent {
 			return { stopReason: "end_turn" };
 		}
 
-		const text =
-			session.permissionMode === PLAN_MODE_ID
-				? PLAN_MODE_INJECTION + rawText
-				: rawText;
 		const outcome = await this.adapter.runPrompt(
 			sessionId,
 			session,
-			text,
+			rawText,
 			client,
 		);
 
@@ -361,22 +356,33 @@ export class AgyAcpAgent {
 		value?: unknown;
 	}): Promise<SetSessionConfigOptionResponse> {
 		const sessionId = this.requireSessionId(params.sessionId);
-		const value = typeof params.value === "string" ? params.value : "";
 		if (
 			params.configId !== MODEL_CONFIG_ID &&
-			params.configId !== MODE_CONFIG_ID
+			params.configId !== MODE_CONFIG_ID &&
+			params.configId !== SANDBOX_CONFIG_ID
 		) {
 			throw RequestError.invalidParams(
 				undefined,
 				`unknown configId: ${params.configId}`,
 			);
 		}
-		if (!value) throw RequestError.invalidParams(undefined, "missing value");
 		const session = await this.requireSession(sessionId);
-		if (params.configId === MODEL_CONFIG_ID) {
-			session.modelId = value;
-		} else if (params.configId === MODE_CONFIG_ID) {
-			session.permissionMode = value;
+		if (params.configId === SANDBOX_CONFIG_ID) {
+			if (typeof params.value !== "boolean") {
+				throw RequestError.invalidParams(
+					undefined,
+					"sandbox value must be a boolean",
+				);
+			}
+			session.sandbox = params.value;
+		} else {
+			const value = typeof params.value === "string" ? params.value : "";
+			if (!value) throw RequestError.invalidParams(undefined, "missing value");
+			if (params.configId === MODEL_CONFIG_ID) {
+				session.modelId = value;
+			} else if (params.configId === MODE_CONFIG_ID) {
+				session.permissionMode = value;
+			}
 		}
 		await this.sessions.persist(sessionId, session);
 		return { configOptions: this.configOptions(session) };
@@ -474,13 +480,8 @@ export class AgyAcpAgent {
 			});
 		}
 
-		const pm = session.permissionMode;
 		const currentMode =
-			pm === BYPASS_MODE_ID
-				? BYPASS_MODE_ID
-				: pm === PLAN_MODE_ID
-					? PLAN_MODE_ID
-					: DEFAULT_MODE_ID;
+			session.permissionMode === PLAN_MODE_ID ? PLAN_MODE_ID : DEFAULT_MODE_ID;
 
 		options.push({
 			id: MODE_CONFIG_ID,
@@ -492,22 +493,25 @@ export class AgyAcpAgent {
 				{
 					value: DEFAULT_MODE_ID,
 					name: "Standard",
-					description: "Antigravity's standard mode",
+					description: "Antigravity's standard mode (agy --mode accept-edits)",
 				},
 				{
 					value: PLAN_MODE_ID,
 					name: "Plan Mode",
 					description:
 						"Read-only exploration: agent may only read and search, then returns " +
-						"a step-by-step plan without making any changes",
-				},
-				{
-					value: BYPASS_MODE_ID,
-					name: "Skip Permissions",
-					description:
-						"Run without permission prompts — use with caution, as this may allow the agent to make changes without confirmation",
+						"a step-by-step plan without making any changes (agy --mode plan)",
 				},
 			],
+		});
+
+		options.push({
+			id: SANDBOX_CONFIG_ID,
+			name: "Sandbox",
+			category: "security",
+			type: "boolean",
+			currentValue: session.sandbox ?? false,
+			description: "Run in a sandbox with terminal restrictions enabled",
 		});
 
 		return options;

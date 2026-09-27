@@ -6,8 +6,10 @@ export interface Session {
 	lastStepIdx: number;
 	/** Selected model id, or null for agy's default. */
 	modelId: string | null;
-	/** Permission mode (e.g. "bypassPermissions"), or null for default. */
+	/** Permission mode (e.g. "plan"), or null for default. */
 	permissionMode: string | null;
+	/** Whether sandbox mode with terminal restrictions is enabled. */
+	sandbox?: boolean;
 	/** Working directory for this session (from session/new cwd param). */
 	cwd: string;
 	/** Extra workspace roots beyond cwd (from additionalDirectories param). */
@@ -31,6 +33,7 @@ export function newSession(
 		lastStepIdx: -1,
 		modelId: null,
 		permissionMode: null,
+		sandbox: false,
 		cwd,
 		additionalDirs,
 		title: null,

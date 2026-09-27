@@ -30,16 +30,8 @@ export const MAX_REPLAY_CACHE = 32;
 export const MODEL_CONFIG_ID = "model";
 export const MODE_CONFIG_ID = "mode";
 export const DEFAULT_MODE_ID = "default";
-export const BYPASS_MODE_ID = "bypassPermissions";
 export const PLAN_MODE_ID = "plan";
-
-export const PLAN_MODE_INJECTION =
-	"<system>\n[PLANNING MODE] You must NOT write, edit, create, move, or execute any files or " +
-	"commands. You may only read, search, and explore. Your response must be a clear.\n" +
-	"Exception: You can run commands and fetch data from the web which lets you explore, read, search and collect " +
-	"more information for creating a plan. " +
-	"You can use a tool to write a step - by - step implementation plan for how to accomplish the following task " +
-	"— strictly do not start implementing it:\n<system>\n";
+export const SANDBOX_CONFIG_ID = "sandbox";
 
 export const AUTH_METHOD_ID = "agy-agent";
 

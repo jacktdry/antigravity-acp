@@ -112,6 +112,7 @@ export class Adapter {
 			conversationId: session.conversationId,
 			modelId: session.modelId,
 			permissionMode: session.permissionMode,
+			sandbox: session.sandbox,
 			prompt: promptArg,
 			extraArgs: extraArgsFromEnv(),
 		});

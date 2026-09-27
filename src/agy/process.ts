@@ -4,8 +4,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-const BYPASS_MODES = new Set(["bypassPermissions", "bypass", "dontAsk"]);
-
 // Linux MAX_ARG_STRLEN is 128KB; stay well below it to prevent E2BIG errors.
 export const MAX_PROMPT_ARG_LENGTH = 64 * 1024;
 
@@ -68,6 +66,8 @@ export interface AgyArgsOptions {
 	conversationId: string | null;
 	modelId: string | null;
 	permissionMode: string | null;
+	/** Whether sandbox mode with terminal restrictions is enabled. */
+	sandbox?: boolean;
 	prompt: string;
 	/** Extra args from $AGY_EXTRA_ARGS, already split. */
 	extraArgs?: string[];
@@ -81,12 +81,16 @@ export function buildAgyArgs(opts: AgyArgsOptions): string[] {
 	}
 	if (opts.conversationId) args.push("--conversation", opts.conversationId);
 	if (opts.modelId) args.push("--model", opts.modelId);
-	if (opts.permissionMode && BYPASS_MODES.has(opts.permissionMode)) {
-		args.push("--dangerously-skip-permissions");
+	if (opts.permissionMode === "plan") {
+		args.push("--mode", "plan");
 	} else {
-		// Always skip permissions in ACP mode — there is no interactive
-		// terminal for the user to approve tool calls.
-		args.push("--dangerously-skip-permissions");
+		args.push("--mode", "accept-edits");
+	}
+	// Always skip permissions in ACP mode — there is no interactive
+	// terminal for the user to approve tool calls.
+	args.push("--dangerously-skip-permissions");
+	if (opts.sandbox) {
+		args.push("--sandbox");
 	}
 	args.push("--print-timeout", "0");
 	if (opts.extraArgs?.length) args.push(...opts.extraArgs);

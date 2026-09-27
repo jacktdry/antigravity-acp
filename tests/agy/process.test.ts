@@ -55,7 +55,7 @@ describe("agy/process.ts", () => {
 	});
 
 	describe("buildAgyArgs()", () => {
-		it("should build basic args", () => {
+		it("should build basic args with default accept-edits mode", () => {
 			const args = buildAgyArgs({
 				workingDir: "/cwd",
 				conversationId: null,
@@ -66,6 +66,8 @@ describe("agy/process.ts", () => {
 			expect(args).toEqual([
 				"--add-dir",
 				"/cwd",
+				"--mode",
+				"accept-edits",
 				"--dangerously-skip-permissions",
 				"--print-timeout",
 				"0",
@@ -90,6 +92,8 @@ describe("agy/process.ts", () => {
 				"/dir1",
 				"--add-dir",
 				"/dir2",
+				"--mode",
+				"accept-edits",
 				"--dangerously-skip-permissions",
 				"--print-timeout",
 				"0",
@@ -110,6 +114,8 @@ describe("agy/process.ts", () => {
 			expect(args).toEqual([
 				"--add-dir",
 				"/cwd",
+				"--mode",
+				"accept-edits",
 				"--dangerously-skip-permissions",
 				"--print-timeout",
 				"0",
@@ -132,6 +138,8 @@ describe("agy/process.ts", () => {
 			expect(args).toEqual([
 				"--add-dir",
 				"/cwd",
+				"--mode",
+				"accept-edits",
 				"--dangerously-skip-permissions",
 				"--print-timeout",
 				"0",
@@ -157,6 +165,8 @@ describe("agy/process.ts", () => {
 				"conv-1",
 				"--model",
 				"model-1",
+				"--mode",
+				"accept-edits",
 				"--dangerously-skip-permissions",
 				"--print-timeout",
 				"0",
@@ -165,28 +175,89 @@ describe("agy/process.ts", () => {
 			]);
 		});
 
-		it("should handle bypass permission modes", () => {
-			for (const mode of ["bypassPermissions", "bypass", "dontAsk"]) {
-				const args = buildAgyArgs({
-					workingDir: "/cwd",
-					conversationId: null,
-					modelId: null,
-					permissionMode: mode,
-					prompt: "hello",
-				});
-				expect(args).toContain("--dangerously-skip-permissions");
-			}
-		});
-
-		it("should always skip permissions regardless of mode", () => {
+		it("should set --mode plan when permissionMode is plan", () => {
 			const args = buildAgyArgs({
 				workingDir: "/cwd",
 				conversationId: null,
 				modelId: null,
-				permissionMode: "ask",
+				permissionMode: "plan",
 				prompt: "hello",
 			});
-			expect(args).toContain("--dangerously-skip-permissions");
+			expect(args).toEqual([
+				"--add-dir",
+				"/cwd",
+				"--mode",
+				"plan",
+				"--dangerously-skip-permissions",
+				"--print-timeout",
+				"0",
+				"-p",
+				"hello",
+			]);
+		});
+
+		it("should add --sandbox when sandbox is true", () => {
+			const args = buildAgyArgs({
+				workingDir: "/cwd",
+				conversationId: null,
+				modelId: null,
+				permissionMode: null,
+				sandbox: true,
+				prompt: "hello",
+			});
+			expect(args).toEqual([
+				"--add-dir",
+				"/cwd",
+				"--mode",
+				"accept-edits",
+				"--dangerously-skip-permissions",
+				"--sandbox",
+				"--print-timeout",
+				"0",
+				"-p",
+				"hello",
+			]);
+		});
+
+		it("should omit --sandbox when sandbox is false or omitted", () => {
+			const argsFalse = buildAgyArgs({
+				workingDir: "/cwd",
+				conversationId: null,
+				modelId: null,
+				permissionMode: null,
+				sandbox: false,
+				prompt: "hello",
+			});
+			expect(argsFalse).not.toContain("--sandbox");
+
+			const argsOmitted = buildAgyArgs({
+				workingDir: "/cwd",
+				conversationId: null,
+				modelId: null,
+				permissionMode: null,
+				prompt: "hello",
+			});
+			expect(argsOmitted).not.toContain("--sandbox");
+		});
+
+		it("should always skip permissions regardless of mode", () => {
+			const argsPlan = buildAgyArgs({
+				workingDir: "/cwd",
+				conversationId: null,
+				modelId: null,
+				permissionMode: "plan",
+				prompt: "hello",
+			});
+			expect(argsPlan).toContain("--dangerously-skip-permissions");
+
+			const argsDefault = buildAgyArgs({
+				workingDir: "/cwd",
+				conversationId: null,
+				modelId: null,
+				permissionMode: "default",
+				prompt: "hello",
+			});
+			expect(argsDefault).toContain("--dangerously-skip-permissions");
 
 			const argsNullMode = buildAgyArgs({
 				workingDir: "/cwd",

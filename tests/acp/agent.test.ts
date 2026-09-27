@@ -115,12 +115,71 @@ describe("AgyAcpAgent", () => {
 		expect(res).toBeDefined();
 	});
 
-	test("prompt handles mode injection", async () => {
+	test("setConfigOption sets sandbox boolean option", async () => {
+		const session: any = { cwd: process.cwd() };
+		spyOn(SessionManager.prototype, "ensure").mockResolvedValue(session);
+
+		const res = await agent.setConfigOption({
+			sessionId: "s1",
+			configId: "sandbox",
+			value: true,
+		});
+		expect(res).toBeDefined();
+		expect(session.sandbox).toBe(true);
+	});
+
+	test("setConfigOption rejects a non-boolean sandbox value", async () => {
+		await expect(
+			agent.setConfigOption({
+				sessionId: "s1",
+				configId: "sandbox",
+				value: "true",
+			}),
+		).rejects.toThrow();
+	});
+
+	test("prompt sends the raw prompt text without string injection, regardless of mode", async () => {
+		const runPromptSpy = spyOn(Adapter.prototype, "runPrompt").mockResolvedValue({
+			stopReason: "end_turn",
+			error: undefined,
+			conversationId: "c1",
+			lastStepIdx: 1,
+			hadUpdates: true,
+		});
+
 		const res = await agent.prompt(
 			{ sessionId: "s1", prompt: [{ type: "text", text: "hello" }] } as any,
 			clientMock,
 		);
 		expect(res.stopReason).toBe("end_turn");
+		// The 3rd positional arg to runPrompt is the prompt text sent to agy.
+		// No PLAN_MODE_INJECTION or other prefix/suffix should be added.
+		const sentText = runPromptSpy.mock.calls[0]?.[2] as string;
+		expect(sentText).toContain("hello");
+		expect(sentText).not.toContain("PLANNING MODE");
+		expect(sentText).not.toContain("strictly do not start implementing it");
+	});
+
+	test("prompt sends raw text unmodified in plan mode (no injected system prompt)", async () => {
+		const runPromptSpy = spyOn(Adapter.prototype, "runPrompt").mockResolvedValue({
+			stopReason: "end_turn",
+			error: undefined,
+			conversationId: "c1",
+			lastStepIdx: 1,
+			hadUpdates: true,
+		});
+		spyOn(SessionManager.prototype, "ensure").mockResolvedValue({
+			cwd: process.cwd(),
+			permissionMode: "plan",
+		} as any);
+
+		await agent.prompt(
+			{ sessionId: "s1", prompt: [{ type: "text", text: "hello" }] } as any,
+			clientMock,
+		);
+		const sentText = runPromptSpy.mock.calls[0]?.[2] as string;
+		expect(sentText).toContain("hello");
+		expect(sentText).not.toContain("PLANNING MODE");
 	});
 
 	test("prompt records the steps of a failed turn before reporting the error", async () => {
