@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-27
+
+### Added
+- **Image Attachments in Prompts**: The ACP server now advertises the `image` prompt capability, so ACP clients (Zed, Paseo, etc.) allow attaching images to a prompt. Attached images are written to a private, per-user temp file and the model is pointed at it with its own `view_file` tool. (#24)
+- **Sandbox Mode Config Option**: Added a new `sandbox` boolean session configuration option. When enabled, prompts run with agy's `--sandbox` flag (terminal restrictions enabled).
+- **Legacy Session Mode & Model Support**: Restored compatibility with older ACP clients that call the pre-config-option `session/set_mode` and model-selection methods. (#14)
+
+### Changed
+- **Native Execution Modes**: Replaced the old prompt-injected "planning mode" text with agy's own `--mode` flag. Standard mode now maps to `--mode accept-edits`, and Plan Mode maps to `--mode plan`. `--dangerously-skip-permissions` is now passed for both. The "Skip Permissions" mode option was removed as redundant.
+- **Bundled `agy` Version**: Updated the auto-installed `agy` CLI release from v1.0.13 to v1.2.12, including refreshed per-platform archive checksums.
+- **`$AGY_EXTRA_ARGS` Precedence**: Extra CLI args from `$AGY_EXTRA_ARGS` are now appended last in the argument vector, so they can override any of the server's own flags (e.g. a custom `--print-timeout`).
+
+### Fixed
+- **Hung Long-Running Turns**: Disabled agy's built-in 5-minute print-mode timeout (`--print-timeout 0`) so long-running turns are no longer aborted mid-flight; turn cancellation is handled entirely by the ACP client via `session/cancel`. (#16)
+- **Silent Quota-Limit Hangs**: The server now detects a `RESOURCE_EXHAUSTED` usage-limit error from agy, stops the hung subprocess, and surfaces a clear error with the reset time and Error ID — instead of leaving the client waiting for minutes with no feedback. Short, agy-retried per-minute rate limits are left alone. (#23)
+- **Oversized Prompt Crashes**: Prompts larger than 64KB are now offloaded to a temporary file instead of being passed as a CLI argument, preventing `E2BIG: argument list too long` spawn failures on large attachments or pasted context. (#17)
+- **Incomplete Tool Output Parsing**: Fixed decoding of `field 140` tool outputs and routing for step type `132`, so more tool calls render their output correctly in the client UI. (#15)
+- **Tool Calls Left Open Mid-Turn**: Tool-call steps first observed while still running now correctly receive a terminal `tool_call_update` once agy reports completion or failure, instead of being left open indefinitely — fixing ACP clients that reject a turn ending with unfinished tool calls. (#19)
+
+### Dependencies
+- Bumped `actions/checkout` from v4 to v7 in CI workflows. (#1)
+
 ## [1.1.0] - 2026-08-19
 
 ### Added
