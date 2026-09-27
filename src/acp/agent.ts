@@ -137,7 +137,10 @@ export class AgyAcpAgent {
 			agentInfo: { name: "Antigravity", version: this.config.version },
 			agentCapabilities: {
 				loadSession: true,
-				promptCapabilities: { embeddedContext: true },
+				// `image: true` because promptText() already writes attached images to a
+				// private temp file and directs agy's view_file tool at it (see writeImage
+				// below). `audio` stays unset: agy has no equivalent ingestion path yet.
+				promptCapabilities: { image: true, embeddedContext: true },
 				sessionCapabilities: {
 					list: {},
 					delete: {},

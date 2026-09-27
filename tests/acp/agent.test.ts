@@ -70,6 +70,11 @@ describe("AgyAcpAgent", () => {
 		expect(result.agentCapabilities).toBeDefined();
 	});
 
+	test("initialize advertises image prompt capability so clients allow image attachments", async () => {
+		const result = await agent.initialize();
+		expect(result.agentCapabilities.promptCapabilities?.image).toBe(true);
+	});
+
 	test("authenticate throws for invalid method", () => {
 		expect(() => agent.authenticate({ methodId: "invalid" })).toThrow();
 	});
