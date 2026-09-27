@@ -65,6 +65,8 @@ describe("agy/process.ts", () => {
 				"--add-dir",
 				"/cwd",
 				"--dangerously-skip-permissions",
+				"--print-timeout",
+				"0",
 				"-p",
 				"hello",
 			]);
@@ -87,12 +89,14 @@ describe("agy/process.ts", () => {
 				"--add-dir",
 				"/dir2",
 				"--dangerously-skip-permissions",
+				"--print-timeout",
+				"0",
 				"-p",
 				"hello",
 			]);
 		});
 
-		it("should add extraArgs", () => {
+		it("should add extraArgs at the end to allow overriding preceding flags", () => {
 			const args = buildAgyArgs({
 				workingDir: "/cwd",
 				extraArgs: ["--foo", "bar"],
@@ -104,9 +108,33 @@ describe("agy/process.ts", () => {
 			expect(args).toEqual([
 				"--add-dir",
 				"/cwd",
+				"--dangerously-skip-permissions",
+				"--print-timeout",
+				"0",
 				"--foo",
 				"bar",
+				"-p",
+				"hello",
+			]);
+		});
+
+		it("should allow extraArgs to override print-timeout or other options", () => {
+			const args = buildAgyArgs({
+				workingDir: "/cwd",
+				extraArgs: ["--print-timeout", "10m"],
+				conversationId: null,
+				modelId: null,
+				permissionMode: null,
+				prompt: "hello",
+			});
+			expect(args).toEqual([
+				"--add-dir",
+				"/cwd",
 				"--dangerously-skip-permissions",
+				"--print-timeout",
+				"0",
+				"--print-timeout",
+				"10m",
 				"-p",
 				"hello",
 			]);
@@ -128,6 +156,8 @@ describe("agy/process.ts", () => {
 				"--model",
 				"model-1",
 				"--dangerously-skip-permissions",
+				"--print-timeout",
+				"0",
 				"-p",
 				"hello",
 			]);
