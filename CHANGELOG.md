@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0-agentdock.4] - 2026-10-04
+
+### Fixed
+- **Broker-disabled ACP usability**: AgentDock-launched Antigravity ACP sessions remain usable for coding when Browser Broker is unavailable or disabled; AGY children still run in a browser-free private HOME instead of inheriting global browser MCP/plugins.
+
 ## [1.2.0-agentdock.3] - 2026-10-04
 
 ### Added

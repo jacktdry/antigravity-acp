@@ -23,6 +23,10 @@ function brokerRequired(): boolean {
 	return process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED === "1";
 }
 
+function browserBackendsDisabled(): boolean {
+	return process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED === "1";
+}
+
 function parseBinding(mcpServers: unknown): BrowserBrokerBinding | null {
 	if (!Array.isArray(mcpServers)) {
 		if (brokerRequired())
@@ -165,6 +169,8 @@ export function prepareAgyBrokerEnvironment(
 	if (!binding) {
 		if (brokerRequired())
 			throw new Error("AgentDock Browser Broker MCP is required");
+		if (browserBackendsDisabled())
+			return prepareChildEnvironment(sessionId, null);
 		return undefined;
 	}
 	return prepareChildEnvironment(sessionId, binding);

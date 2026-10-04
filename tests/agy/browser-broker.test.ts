@@ -222,6 +222,40 @@ describe("private child HOME", () => {
 	});
 });
 
+test("disabled mode keeps coding child sandboxed without a broker", () => {
+	const previousRequired = process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED;
+	const previousDisabled = process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED;
+	delete process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED;
+	process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED = "1";
+	try {
+		const env = prepareAgyBrokerEnvironment("disabled-session", null);
+		if (!env) throw new Error("disabled mode did not create a child sandbox");
+		const home = env.HOME;
+		if (!home) throw new Error("disabled mode child HOME missing");
+		expect(home).not.toBe(os.homedir());
+		expect(env.AGENTDOCK_BROWSER_BROKER_TOKEN).toBe("");
+		const mcp = JSON.parse(
+			fs.readFileSync(
+				path.join(home, ".gemini/config/mcp_config.json"),
+				"utf8",
+			),
+		);
+		expect(mcp.mcpServers).toEqual({});
+		const cfg = JSON.parse(
+			fs.readFileSync(path.join(home, ".gemini/config/config.json"), "utf8"),
+		);
+		expect(cfg.plugins["chrome-devtools-plugin"].enabled).toBe(false);
+	} finally {
+		cleanupAgyBrokerHome("disabled-session");
+		if (previousRequired === undefined)
+			delete process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED;
+		else process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED = previousRequired;
+		if (previousDisabled === undefined)
+			delete process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED;
+		else process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED = previousDisabled;
+	}
+});
+
 describe("HTTP proxy", () => {
 	let http: ReturnType<typeof Bun.serve>;
 	afterEach(() => http?.stop(true));
