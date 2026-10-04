@@ -28,6 +28,7 @@ export const MAX_SESSIONS = 64;
 export const MAX_REPLAY_CACHE = 32;
 
 export const MODEL_CONFIG_ID = "model";
+export const REASONING_CONFIG_ID = "reasoning_effort";
 export const MODE_CONFIG_ID = "mode";
 export const DEFAULT_MODE_ID = "default";
 export const PLAN_MODE_ID = "plan";

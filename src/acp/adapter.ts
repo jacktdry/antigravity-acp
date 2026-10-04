@@ -17,6 +17,14 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** agy retries per-minute 429 rate limits itself, so only a longer wait is a
  *  usage limit worth stopping for. */
 const QUOTA_STOP_MS = 60_000;
+export const CANCEL_GRACE_MS = 1_000;
+
+interface ActiveChild {
+	child: Bun.Subprocess;
+	cancelled: boolean;
+	exited: boolean;
+	timer?: ReturnType<typeof setTimeout>;
+}
 
 /** Milliseconds until the quota resets, from "Resets in 1d2h3m4s", or null. */
 export function resetDelayMs(text: string): number | null {
@@ -63,23 +71,82 @@ export interface AdapterConfig {
 }
 
 export class Adapter {
-	private readonly children = new Map<string, Bun.Subprocess>();
-	private readonly cancelled = new Set<string>();
+	private readonly children = new Map<string, ActiveChild>();
 
 	constructor(private readonly config: AdapterConfig) {}
 
 	/** Request cancellation of an in-flight prompt for a session. */
 	cancel(sessionId: string): void {
-		this.cancelled.add(sessionId);
-		const child = this.children.get(sessionId);
-		if (child) {
+		const active = this.children.get(sessionId);
+		if (active && !active.cancelled) {
+			active.cancelled = true;
+			if (active.exited) return;
+			const { child } = active;
 			// SIGINT allows agy to flush its DB before exiting; on Windows we fall
 			// back to an ungraceful kill because SIGINT is not a real signal there.
 			if (process.platform === "win32") {
-				child.kill();
+				child.kill("SIGKILL");
 			} else {
 				child.kill("SIGINT");
+				active.timer = setTimeout(() => {
+					active.timer = undefined;
+					if (!active.exited && this.children.get(sessionId) === active) {
+						child.kill("SIGKILL");
+					}
+				}, CANCEL_GRACE_MS);
 			}
+		}
+	}
+
+	private trackChild(sessionId: string, child: Bun.Subprocess) {
+		const active: ActiveChild = { child, cancelled: false, exited: false };
+		this.children.set(sessionId, active);
+		const clearTimer = () => {
+			if (active.timer !== undefined) clearTimeout(active.timer);
+			active.timer = undefined;
+		};
+		void child.exited.then(() => {
+			active.exited = true;
+			clearTimer();
+		});
+
+		return { active, clearTimer };
+	}
+
+	/** /usage has stdout output, but shares the prompt cancellation lifecycle. */
+	async runUsage(
+		sessionId: string,
+		cwd: string,
+	): Promise<{ text: string; cancelled: boolean }> {
+		if (this.children.has(sessionId))
+			throw new Error("a prompt is already active for this session");
+		let child: Bun.Subprocess;
+		try {
+			child = Bun.spawn([this.config.binary, "-p", "/usage"], {
+				cwd,
+				stdin: "ignore",
+				stdout: "pipe",
+				stderr: "ignore",
+			});
+		} catch {
+			return { text: "", cancelled: false };
+		}
+		const { active, clearTimer } = this.trackChild(sessionId, child);
+		try {
+			const text = await new Response(child.stdout as ReadableStream).text();
+			const code = await child.exited;
+			return {
+				text: code === 0 ? text.trim() : "",
+				cancelled: active.cancelled,
+			};
+		} finally {
+			if (!active.exited) {
+				this.cancel(sessionId);
+				await child.exited;
+			}
+			clearTimer();
+			if (this.children.get(sessionId) === active)
+				this.children.delete(sessionId);
 		}
 	}
 
@@ -90,7 +157,9 @@ export class Adapter {
 		promptText: string,
 		client: AcpClient,
 	): Promise<PromptOutcome> {
-		this.cancelled.delete(sessionId);
+		if (this.children.has(sessionId)) {
+			throw new Error("a prompt is already active for this session");
+		}
 
 		// Use the session's cwd if set, otherwise fall back to the server's workingDir.
 		const effectiveCwd = session.cwd || this.config.workingDir;
@@ -101,10 +170,7 @@ export class Adapter {
 				? conversationSnapshot(this.config.conversationsDir)
 				: null;
 
-		const { promptArg, tempFilePath } = preparePromptArg(
-			promptText,
-			sessionId,
-		);
+		const { promptArg, tempFilePath } = preparePromptArg(promptText, sessionId);
 
 		const args = buildAgyArgs({
 			workingDir: effectiveCwd,
@@ -134,7 +200,7 @@ export class Adapter {
 				error: `failed to run agy: ${(err as Error).message}`,
 			};
 		}
-		this.children.set(sessionId, child);
+		const { active, clearTimer } = this.trackChild(sessionId, child);
 
 		try {
 			// Drain stderr concurrently (resolves when the process exits).
@@ -166,7 +232,10 @@ export class Adapter {
 						await pollOnce();
 						// agy retries a usage-limit 429 for minutes without exiting; stop it.
 						const e = poller.quotaError;
-						if (e && (resetDelayMs(e.message || e.detail) ?? 0) > QUOTA_STOP_MS) {
+						if (
+							e &&
+							(resetDelayMs(e.message || e.detail) ?? 0) > QUOTA_STOP_MS
+						) {
 							quotaError = e;
 							this.cancel(sessionId);
 							break;
@@ -182,14 +251,15 @@ export class Adapter {
 			const exitCode = await child.exited;
 			polling = false;
 			await loop;
-			this.children.delete(sessionId);
 
 			// A few trailing polls to catch rows flushed right around exit.
 			for (let attempt = 0; attempt < 3; attempt++) {
 				try {
 					await pollOnce();
 				} catch (err) {
-					console.error(`[agy-acp] final poll error: ${(err as Error).message}`);
+					console.error(
+						`[agy-acp] final poll error: ${(err as Error).message}`,
+					);
 				}
 				if (attempt < 2) await sleep(100);
 			}
@@ -198,7 +268,7 @@ export class Adapter {
 			const stderr = (await stderrPromise).trim();
 			if (stderr.length > 0) console.error(`[agy-acp] agy stderr: ${stderr}`);
 
-			const wasCancelled = this.cancelled.delete(sessionId);
+			const wasCancelled = active.cancelled;
 
 			const outcome: PromptOutcome = {
 				stopReason: wasCancelled ? "cancelled" : "end_turn",
@@ -221,6 +291,13 @@ export class Adapter {
 
 			return outcome;
 		} finally {
+			if (!active.exited) {
+				this.cancel(sessionId);
+				await child.exited;
+			}
+			clearTimer();
+			if (this.children.get(sessionId) === active)
+				this.children.delete(sessionId);
 			if (tempFilePath) {
 				try {
 					if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);

@@ -12,7 +12,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { BinaryWriter } from "@bufbuild/protobuf/wire";
-import { Adapter, formatQuotaError } from "../../src/acp/adapter";
+import {
+	Adapter,
+	CANCEL_GRACE_MS,
+	formatQuotaError,
+} from "../../src/acp/adapter";
 import type { AcpClient } from "../../src/acp/client";
 import { conversationDbPath } from "../../src/conversation/database";
 import { newSession } from "../../src/types/session";
@@ -174,5 +178,106 @@ describe("Adapter quota handling", () => {
 
 		expect(killed).toBe(false);
 		expect(outcome.error).toBeUndefined();
+	});
+});
+
+describe("Adapter cancellation", () => {
+	let dir: string;
+	beforeEach(() => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), "agy-cancel-"));
+	});
+	afterEach(() => {
+		mock.restore();
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+	function setup(exitOnInterrupt = false) {
+		let finish!: (code: number) => void;
+		const exited = new Promise<number>((resolve) => {
+			finish = resolve;
+		});
+		const kill = mock((signal: string) => {
+			if (signal === "SIGKILL" || exitOnInterrupt) finish(130);
+		});
+		spyOn(Bun, "spawn").mockReturnValue({ stderr: null, exited, kill } as any);
+		const adapter = new Adapter({
+			binary: "agy",
+			workingDir: dir,
+			conversationsDir: dir,
+			skipNarration: false,
+		});
+		const run = () =>
+			adapter.runPrompt("s1", newSession(dir), "hi", {
+				update: async () => {},
+			} as unknown as AcpClient);
+		return { adapter, run, kill, finish };
+	}
+	test("repeated cancellation signals once, then kills an unresponsive child", async () => {
+		const { adapter, run, kill } = setup();
+		const turn = run();
+		adapter.cancel("s1");
+		adapter.cancel("s1");
+		expect(kill.mock.calls).toEqual([
+			[process.platform === "win32" ? "SIGKILL" : "SIGINT"],
+		]);
+		expect((await turn).stopReason).toBe("cancelled");
+		expect(kill.mock.calls).toEqual(
+			process.platform === "win32" ? [["SIGKILL"]] : [["SIGINT"], ["SIGKILL"]],
+		);
+		adapter.cancel("s1");
+	});
+	test("graceful exit clears escalation before the next child", async () => {
+		const first = setup(true);
+		const turn = first.run();
+		first.adapter.cancel("s1");
+		await turn;
+		let finish!: (code: number) => void;
+		const exited = new Promise<number>((r) => {
+			finish = r;
+		});
+		const kill = mock(() => finish(130));
+		spyOn(Bun, "spawn").mockReturnValue({ stderr: null, exited, kill } as any);
+		const next = first.run();
+		await Bun.sleep(CANCEL_GRACE_MS + 50);
+		expect(first.kill).toHaveBeenCalledTimes(1);
+		expect(kill).not.toHaveBeenCalled();
+		finish(0);
+		expect((await next).stopReason).toBe("end_turn");
+	});
+	test("usage output is tracked and terminated through the same cancellation path", async () => {
+		let finish!: (code: number) => void;
+		let close!: () => void;
+		const exited = new Promise<number>((r) => {
+			finish = r;
+		});
+		const stdout = new ReadableStream({
+			start(controller) {
+				close = () => controller.close();
+			},
+		});
+		const kill = mock(() => {
+			close();
+			finish(130);
+		});
+		spyOn(Bun, "spawn").mockReturnValue({ stdout, exited, kill } as any);
+		const adapter = new Adapter({
+			binary: "agy",
+			workingDir: dir,
+			conversationsDir: dir,
+			skipNarration: false,
+		});
+		const usage = adapter.runUsage("s1", dir);
+		adapter.cancel("s1");
+		adapter.cancel("s1");
+		expect(await usage).toEqual({ text: "", cancelled: true });
+		await Bun.sleep(CANCEL_GRACE_MS + 50);
+		expect(kill).toHaveBeenCalledTimes(1);
+	});
+
+	test("a second prompt cannot replace the child targeted by cancellation", async () => {
+		const { adapter, run } = setup(true);
+		const turn = run();
+		await expect(run()).rejects.toThrow("already active");
+		adapter.cancel("s1");
+		await turn;
 	});
 });

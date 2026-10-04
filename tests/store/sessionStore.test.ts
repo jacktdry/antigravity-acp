@@ -9,7 +9,7 @@ import {
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { SessionStore } from "../../src/store/sessionStore";
-import type { StoredSession } from "../../src/types/session";
+import { newSession, type StoredSession } from "../../src/types/session";
 
 describe("SessionStore", () => {
 	const tempDir = path.join(process.cwd(), "tmp-test-store");
@@ -62,6 +62,13 @@ describe("SessionStore", () => {
 		expect(all).toHaveLength(1);
 		expect(all[0]!.sessionId).toBe(sessionId);
 		expect(all[0]!.session).toEqual(sessionData);
+	});
+
+	test("keeps legacy concrete modelId data unchanged across restoration", async () => {
+		for (const id of ["gemini-flash-high", "gpt-oss-120b", "retired-medium"]) {
+			await store.persist(id, { ...newSession("/cwd"), modelId: id });
+			expect((await store.restore(id))?.modelId).toBe(id);
+		}
 	});
 
 	test("should return null when restoring non-existent session", async () => {

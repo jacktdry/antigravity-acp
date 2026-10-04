@@ -1,55 +1,55 @@
 {
-  "name": "antigravity-acp",
-  "description": "An Agent Client Protocol (ACP) server for Google Antigravity's `agy` CLI, built on Bun. Connects ACP-compatible editors to drive `agy` with live streaming and history replay.",
-  "version": "1.2.0",
-  "module": "index.ts",
-  "type": "module",
-  "bin": {
-    "agy-acp": "index.ts",
-    "antigravity-acp": "index.ts"
-  },
-  "files": [
-    "index.ts",
-    "src",
-    "scripts",
-    "README.md",
-    "LICENSE",
-    "CHANGELOG.md"
-  ],
-  "scripts": {
-    "start": "bun run index.ts",
-    "postinstall": "bun scripts/postinstall.ts",
-    "typecheck": "tsc --noEmit",
-    "test": "bun test",
-    "lint": "biome lint .",
-    "format": "biome format --write .",
-    "check": "biome check --write .",
-    "build:mac-arm64": "bun build --compile --target=bun-darwin-arm64   index.ts --outfile dist/agy-acp-darwin-arm64",
-    "build:mac-x64": "bun build --compile --target=bun-darwin-x64     index.ts --outfile dist/agy-acp-darwin-x64",
-    "build:linux-arm64": "bun build --compile --target=bun-linux-arm64    index.ts --outfile dist/agy-acp-linux-arm64",
-    "build:linux-x64": "bun build --compile --target=bun-linux-x64      index.ts --outfile dist/agy-acp-linux-x64",
-    "build:win-arm64": "bun build --compile --target=bun-windows-arm64 index.ts --outfile dist/agy-acp-windows-arm64.exe",
-    "build:win-x64": "bun build --compile --target=bun-windows-x64    index.ts --outfile dist/agy-acp-windows-x64.exe",
-    "build:all": "bun run build:mac-arm64 && bun run build:mac-x64 && bun run build:linux-arm64 && bun run build:linux-x64 && bun run build:win-arm64 && bun run build:win-x64"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^2.5.1",
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
-  "dependencies": {
-    "@agentclientprotocol/sdk": "^1.0.0",
-    "@bufbuild/protobuf": "^2.12.1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/shubzkothekar/antigravity-acp.git"
-  },
-  "bugs": {
-    "url": "https://github.com/shubzkothekar/antigravity-acp/issues"
-  },
-  "homepage": "https://github.com/shubzkothekar/antigravity-acp#readme",
-  "license": "MIT"
+	"name": "antigravity-acp",
+	"description": "An Agent Client Protocol (ACP) server for Google Antigravity's `agy` CLI, built on Bun. Connects ACP-compatible editors to drive `agy` with live streaming and history replay.",
+	"version": "1.2.0-agentdock.1",
+	"module": "index.ts",
+	"type": "module",
+	"bin": {
+		"agy-acp": "index.ts",
+		"antigravity-acp": "index.ts"
+	},
+	"files": [
+		"index.ts",
+		"src",
+		"scripts",
+		"README.md",
+		"LICENSE",
+		"CHANGELOG.md"
+	],
+	"scripts": {
+		"start": "bun run index.ts",
+		"postinstall": "bun scripts/postinstall.ts",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test",
+		"lint": "biome lint .",
+		"format": "biome format --write .",
+		"check": "biome check --write .",
+		"build:mac-arm64": "bun build --compile --target=bun-darwin-arm64   index.ts --outfile dist/agy-acp-darwin-arm64",
+		"build:mac-x64": "bun build --compile --target=bun-darwin-x64     index.ts --outfile dist/agy-acp-darwin-x64",
+		"build:linux-arm64": "bun build --compile --target=bun-linux-arm64    index.ts --outfile dist/agy-acp-linux-arm64",
+		"build:linux-x64": "bun build --compile --target=bun-linux-x64      index.ts --outfile dist/agy-acp-linux-x64",
+		"build:win-arm64": "bun build --compile --target=bun-windows-arm64 index.ts --outfile dist/agy-acp-windows-arm64.exe",
+		"build:win-x64": "bun build --compile --target=bun-windows-x64    index.ts --outfile dist/agy-acp-windows-x64.exe",
+		"build:all": "bun run build:mac-arm64 && bun run build:mac-x64 && bun run build:linux-arm64 && bun run build:linux-x64 && bun run build:win-arm64 && bun run build:win-x64"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.1",
+		"@types/bun": "latest"
+	},
+	"peerDependencies": {
+		"typescript": "^5"
+	},
+	"dependencies": {
+		"@agentclientprotocol/sdk": "^1.0.0",
+		"@bufbuild/protobuf": "^2.12.1"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/shubzkothekar/antigravity-acp.git"
+	},
+	"bugs": {
+		"url": "https://github.com/shubzkothekar/antigravity-acp/issues"
+	},
+	"homepage": "https://github.com/shubzkothekar/antigravity-acp#readme",
+	"license": "MIT"
 }

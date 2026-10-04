@@ -19,7 +19,8 @@ import type {
 	SetSessionConfigOptionResponse,
 } from "@agentclientprotocol/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
-import { type DiscoveredModel, discoverModels, runNonInteractivePrompt } from "../agy/process";
+import { modelSelection, REASONING_EFFORTS, selectModel } from "../agy/models";
+import { type DiscoveredModel, discoverModels } from "../agy/process";
 import { formatUsageOutput } from "../agy/usage-format";
 import {
 	AUTH_METHOD_ID,
@@ -29,6 +30,7 @@ import {
 	MODEL_CONFIG_ID,
 	MODELS_CACHE_FILE,
 	PLAN_MODE_ID,
+	REASONING_CONFIG_ID,
 	SANDBOX_CONFIG_ID,
 	STATE_DIR,
 } from "../constants";
@@ -53,6 +55,12 @@ interface ConfigResult {
 	configOptions: SessionConfigOption[];
 }
 
+function isDiscoveredModel(value: unknown): value is DiscoveredModel {
+	if (!value || typeof value !== "object") return false;
+	const model = value as Record<string, unknown>;
+	return typeof model.value === "string" && typeof model.name === "string";
+}
+
 const DEFAULT_MODELS: DiscoveredModel[] = [
 	{ value: "gemini-3.6-flash-medium", name: "Gemini 3.6 Flash (Medium)" },
 	{ value: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 (Thinking)" },
@@ -63,6 +71,9 @@ export class AgyAcpAgent {
 	private readonly adapter: Adapter;
 	private readonly replayCache = new ReplayCache();
 	private availableModels: DiscoveredModel[] = [];
+	private readonly prompts = new Map<string, Promise<PromptResponse>>();
+	private readonly cancelledPrompts = new Set<string>();
+	private readonly stopping = new Map<string, Promise<void>>();
 	// Tracks which AcpClient is serving each session so async updates can be pushed.
 	private readonly activeClients = new Map<string, AcpClient>();
 
@@ -80,9 +91,10 @@ export class AgyAcpAgent {
 				const cached = JSON.parse(fs.readFileSync(MODELS_CACHE_FILE, "utf-8"));
 				if (Array.isArray(cached) && cached.length > 0) {
 					// Normalize cached items to DiscoveredModel structure for backwards compatibility with legacy string[] cache files.
-					this.availableModels = cached.map((item: any) =>
-						typeof item === "string" ? { value: item, name: item } : item,
-					);
+					this.availableModels = cached.flatMap((item: unknown) => {
+						if (typeof item === "string") return [{ value: item, name: item }];
+						return isDiscoveredModel(item) ? [item] : [];
+					});
 				}
 			}
 		} catch {
@@ -93,7 +105,10 @@ export class AgyAcpAgent {
 		try {
 			if (!fs.existsSync(MODELS_CACHE_FILE)) {
 				fs.mkdirSync(STATE_DIR, { recursive: true });
-				fs.writeFileSync(MODELS_CACHE_FILE, JSON.stringify(this.availableModels));
+				fs.writeFileSync(
+					MODELS_CACHE_FILE,
+					JSON.stringify(this.availableModels),
+				);
 			}
 		} catch {
 			// ignore
@@ -120,7 +135,8 @@ export class AgyAcpAgent {
 	// --- ACP methods ---------------------------------------------------------
 
 	listModels() {
-		const models = this.availableModels.length > 0 ? this.availableModels : DEFAULT_MODELS;
+		const models =
+			this.availableModels.length > 0 ? this.availableModels : DEFAULT_MODELS;
 		return {
 			models: models.map((m) => ({
 				id: m.value,
@@ -276,30 +292,51 @@ export class AgyAcpAgent {
 		sessionId?: string;
 	}): Promise<DeleteSessionResponse> {
 		const sessionId = this.requireSessionId(params.sessionId);
-		const deleted = await this.sessions.delete(sessionId);
-		if (!deleted) throw RequestError.resourceNotFound(sessionId);
-		this.activeClients.delete(sessionId);
+		await this.stopSession(sessionId, true);
 		return {};
 	}
 
 	/** Close a session: cancel any in-flight prompt and free in-memory state. */
-	closeSession(params: { sessionId?: string }): CloseSessionResponse {
+	async closeSession(params: {
+		sessionId?: string;
+	}): Promise<CloseSessionResponse> {
 		const sessionId = params.sessionId;
 		if (sessionId) {
-			this.adapter.cancel(sessionId);
-			this.sessions.evict(sessionId);
-			this.activeClients.delete(sessionId);
+			await this.stopSession(sessionId, false);
 		}
 		return {};
 	}
 
-	async prompt(
+	prompt(
+		params: { sessionId?: string; prompt?: unknown },
+		client: AcpClient,
+	): Promise<PromptResponse> {
+		const sessionId = this.requireSessionId(params.sessionId);
+		if (this.stopping.has(sessionId) || this.prompts.has(sessionId)) {
+			return Promise.reject(
+				RequestError.invalidParams(undefined, "session is busy"),
+			);
+		}
+		const turn = this.runPrompt(params, client);
+		this.prompts.set(sessionId, turn);
+		void turn
+			.finally(() => {
+				this.prompts.delete(sessionId);
+				this.cancelledPrompts.delete(sessionId);
+			})
+			.catch(() => {});
+		return turn;
+	}
+
+	private async runPrompt(
 		params: { sessionId?: string; prompt?: unknown },
 		client: AcpClient,
 	): Promise<PromptResponse> {
 		const sessionId = this.requireSessionId(params.sessionId);
 
 		let session = await this.sessions.ensure(sessionId);
+		if (this.stopping.has(sessionId) || this.cancelledPrompts.has(sessionId))
+			return { stopReason: "cancelled" };
 		if (!session) {
 			// Unknown session: create a fresh binding so prompts still work.
 			session = newSession(this.config.workingDir);
@@ -309,11 +346,11 @@ export class AgyAcpAgent {
 		const rawText = promptText(params.prompt);
 		const userText = rawPromptText(params.prompt).trim();
 		if (userText === "/usage" || userText.startsWith("/usage ")) {
-			const output = await runNonInteractivePrompt(
-				this.config.binary,
-				"/usage",
+			const { text: output, cancelled } = await this.adapter.runUsage(
+				sessionId,
 				session.cwd,
 			);
+			if (cancelled) return { stopReason: "cancelled" };
 			await client.update(sessionId, {
 				sessionUpdate: "agent_message_chunk",
 				content: {
@@ -349,7 +386,11 @@ export class AgyAcpAgent {
 	}
 
 	cancel(params: { sessionId?: string }): void {
-		if (params.sessionId) this.adapter.cancel(params.sessionId);
+		if (params.sessionId) {
+			if (this.prompts.has(params.sessionId))
+				this.cancelledPrompts.add(params.sessionId);
+			this.adapter.cancel(params.sessionId);
+		}
 	}
 
 	/** SDK-native config setter (session/set_config_option). */
@@ -361,6 +402,7 @@ export class AgyAcpAgent {
 		const sessionId = this.requireSessionId(params.sessionId);
 		if (
 			params.configId !== MODEL_CONFIG_ID &&
+			params.configId !== REASONING_CONFIG_ID &&
 			params.configId !== MODE_CONFIG_ID &&
 			params.configId !== SANDBOX_CONFIG_ID
 		) {
@@ -380,9 +422,24 @@ export class AgyAcpAgent {
 			session.sandbox = params.value;
 		} else {
 			const value = typeof params.value === "string" ? params.value : "";
-			if (!value) throw RequestError.invalidParams(undefined, "missing value");
+			if (
+				typeof params.value !== "string" ||
+				(!value && params.configId !== REASONING_CONFIG_ID)
+			)
+				throw RequestError.invalidParams(undefined, "missing value");
 			if (params.configId === MODEL_CONFIG_ID) {
-				session.modelId = value;
+				const id = selectModel(this.availableModels, session.modelId, value);
+				if (!id) throw RequestError.invalidParams(undefined, "unknown model");
+				session.modelId = id;
+			} else if (params.configId === REASONING_CONFIG_ID) {
+				const { model } = modelSelection(this.availableModels, session.modelId);
+				const id = model?.variants.get(value);
+				if (!id)
+					throw RequestError.invalidParams(
+						undefined,
+						"unsupported reasoning effort",
+					);
+				session.modelId = id;
 			} else if (params.configId === MODE_CONFIG_ID) {
 				session.permissionMode = value;
 			}
@@ -402,6 +459,28 @@ export class AgyAcpAgent {
 	}
 
 	// --- helpers -------------------------------------------------------------
+
+	private stopSession(sessionId: string, remove: boolean): Promise<void> {
+		const existing = this.stopping.get(sessionId);
+		if (existing)
+			return existing.then(() => this.stopSession(sessionId, remove));
+		const stopped = (async () => {
+			// Install the gate before touching the child or awaiting session restoration.
+			await Promise.resolve();
+			this.adapter.cancel(sessionId);
+			await this.prompts.get(sessionId)?.catch(() => {});
+			if (remove) {
+				const deleted = await this.sessions.delete(sessionId);
+				if (!deleted) throw RequestError.resourceNotFound(sessionId);
+			} else {
+				this.sessions.evict(sessionId);
+			}
+			this.activeClients.delete(sessionId);
+		})();
+		const completion = stopped.finally(() => this.stopping.delete(sessionId));
+		this.stopping.set(sessionId, completion);
+		return completion;
+	}
 
 	private requireSessionId(sessionId: string | undefined): string {
 		if (!sessionId) {
@@ -471,16 +550,39 @@ export class AgyAcpAgent {
 		const models = this.availableModels;
 
 		if (models.length > 0) {
-			const currentModel =
-				session.modelId ?? models[0]?.value ?? "gemini-3.6-flash-medium";
+			const { catalog, model, effort, concrete } = modelSelection(
+				models,
+				session.modelId,
+			);
+			const modelOptions = catalog.map((m) => ({
+				value: m.value,
+				name: m.name,
+			}));
+			if (!model && concrete)
+				modelOptions.push({ value: concrete, name: concrete });
 			options.push({
 				id: MODEL_CONFIG_ID,
 				name: "Model",
 				category: "model",
 				type: "select",
-				currentValue: currentModel,
-				options: models.map((m) => ({ value: m.value, name: m.name })),
+				currentValue: model?.value ?? concrete ?? "",
+				options: modelOptions,
 			});
+			if (model && REASONING_EFFORTS.some((e) => model.variants.has(e))) {
+				options.push({
+					id: REASONING_CONFIG_ID,
+					name: "Reasoning effort",
+					category: "thought_level",
+					type: "select",
+					currentValue: effort,
+					options: [
+						...(model.variants.has("") ? [{ value: "", name: "Default" }] : []),
+						...REASONING_EFFORTS.filter((e) => model.variants.has(e)).map(
+							(e) => ({ value: e, name: e[0]?.toUpperCase() + e.slice(1) }),
+						),
+					],
+				});
+			}
 		}
 
 		const currentMode =

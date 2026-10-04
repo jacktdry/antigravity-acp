@@ -111,6 +111,186 @@ describe("AgyAcpAgent", () => {
 		expect(res).toEqual({});
 	});
 
+	test("delete waits for final persistence and blocks prompts while terminating", async () => {
+		let finish!: (outcome: any) => void;
+		spyOn(Adapter.prototype, "runPrompt").mockImplementation(
+			() =>
+				new Promise((r) => {
+					finish = r;
+				}),
+		);
+		const turn = agent.prompt({ sessionId: "s1", prompt: [] }, clientMock);
+		await Bun.sleep(0);
+		const deletion = agent.deleteSession({ sessionId: "s1" });
+		await Bun.sleep(0);
+		expect(Adapter.prototype.cancel).toHaveBeenCalledWith("s1");
+		expect(SessionManager.prototype.delete).not.toHaveBeenCalled();
+		await expect(
+			agent.prompt({ sessionId: "s1", prompt: [] }, clientMock),
+		).rejects.toThrow("busy");
+		finish({ stopReason: "cancelled", conversationId: "c1", lastStepIdx: 2 });
+		await turn;
+		await deletion;
+		expect(SessionManager.prototype.persist).toHaveBeenCalled();
+		expect(SessionManager.prototype.delete).toHaveBeenCalledWith("s1");
+	});
+	test("close uses cancellation and waits before eviction", async () => {
+		let finish!: (outcome: any) => void;
+		spyOn(Adapter.prototype, "runPrompt").mockImplementation(
+			() =>
+				new Promise((r) => {
+					finish = r;
+				}),
+		);
+		const turn = agent.prompt({ sessionId: "s1", prompt: [] }, clientMock);
+		await Bun.sleep(0);
+		const closing = agent.closeSession({ sessionId: "s1" });
+		await Bun.sleep(0);
+		expect(SessionManager.prototype.evict).not.toHaveBeenCalled();
+		finish({ stopReason: "cancelled", conversationId: "c1", lastStepIdx: 2 });
+		await turn;
+		await closing;
+		expect(Adapter.prototype.cancel).toHaveBeenCalledWith("s1");
+		expect(SessionManager.prototype.evict).toHaveBeenCalledWith("s1");
+	});
+	test("delete during restoration prevents a late child spawn", async () => {
+		let restore!: (session: any) => void;
+		spyOn(SessionManager.prototype, "ensure").mockImplementation(
+			() =>
+				new Promise((r) => {
+					restore = r;
+				}),
+		);
+		const turn = agent.prompt({ sessionId: "s1", prompt: [] }, clientMock);
+		const deletion = agent.deleteSession({ sessionId: "s1" });
+		restore({ cwd: process.cwd() });
+		expect((await turn).stopReason).toBe("cancelled");
+		await deletion;
+		expect(Adapter.prototype.runPrompt).not.toHaveBeenCalled();
+	});
+	test("config selectors restore concrete IDs, persist exact variants, and omit unsupported effort", async () => {
+		agent.availableModels = [
+			{ value: "gemini-low", name: "Gemini (Low)" },
+			{ value: "gemini-high", name: "Gemini (High)" },
+			{ value: "gpt-oss", name: "GPT-OSS" },
+		];
+		const session = { cwd: process.cwd(), modelId: "gemini-high" };
+		spyOn(SessionManager.prototype, "ensure").mockResolvedValue(session);
+		let result = await agent.resumeSession({ sessionId: "s1" }, clientMock);
+		expect(
+			result.configOptions.find((o) => o.id === "model").currentValue,
+		).toBe("gemini");
+		expect(
+			result.configOptions.find((o) => o.id === "reasoning_effort")
+				.currentValue,
+		).toBe("high");
+		await agent.setConfigOption({
+			sessionId: "s1",
+			configId: "reasoning_effort",
+			value: "low",
+		});
+		expect(session.modelId).toBe("gemini-low");
+		await expect(
+			agent.setConfigOption({
+				sessionId: "s1",
+				configId: "reasoning_effort",
+				value: "medium",
+			}),
+		).rejects.toThrow();
+		expect(session.modelId).toBe("gemini-low");
+		result = await agent.setConfigOption({
+			sessionId: "s1",
+			configId: "model",
+			value: "gpt-oss",
+		});
+		expect(session.modelId).toBe("gpt-oss");
+		expect(result.configOptions.some((o) => o.id === "reasoning_effort")).toBe(
+			false,
+		);
+		await expect(
+			agent.setConfigOption({
+				sessionId: "s1",
+				configId: "reasoning_effort",
+				value: "high",
+			}),
+		).rejects.toThrow();
+		await agent.setConfigOption({
+			sessionId: "s1",
+			configId: "model",
+			value: "gemini-high",
+		});
+		expect(session.modelId).toBe("gemini-high");
+	});
+
+	test("close cannot reopen the prompt gate while concurrent deletion is writing", async () => {
+		let finishDelete!: (found: boolean) => void;
+		spyOn(SessionManager.prototype, "delete").mockImplementation(
+			() =>
+				new Promise((r) => {
+					finishDelete = r;
+				}),
+		);
+		const deletion = agent.deleteSession({ sessionId: "s1" });
+		await Bun.sleep(0);
+		const closing = agent.closeSession({ sessionId: "s1" });
+		await expect(
+			agent.prompt({ sessionId: "s1", prompt: [] }, clientMock),
+		).rejects.toThrow("busy");
+		finishDelete(true);
+		await deletion;
+		await closing;
+	});
+	test("advertised base with effort variants exposes a Default effort", async () => {
+		agent.availableModels = [
+			{ value: "gemini", name: "Gemini" },
+			{ value: "gemini-high", name: "Gemini (High)" },
+		];
+		const session = { cwd: process.cwd(), modelId: "gemini" };
+		spyOn(SessionManager.prototype, "ensure").mockResolvedValue(session);
+		const result = await agent.resumeSession({ sessionId: "s1" }, clientMock);
+		expect(
+			result.configOptions.find((o) => o.id === "reasoning_effort").options,
+		).toEqual([
+			{ value: "", name: "Default" },
+			{ value: "high", name: "High" },
+		]);
+		await agent.setConfigOption({
+			sessionId: "s1",
+			configId: "reasoning_effort",
+			value: "high",
+		});
+		expect(session.modelId).toBe("gemini-high");
+		await agent.setConfigOption({
+			sessionId: "s1",
+			configId: "reasoning_effort",
+			value: "",
+		});
+		expect(session.modelId).toBe("gemini");
+	});
+
+	test("cancel during restoration stops the pending prompt without poisoning the next turn", async () => {
+		let restore!: (session: any) => void;
+		spyOn(SessionManager.prototype, "ensure").mockImplementation(
+			() =>
+				new Promise((r) => {
+					restore = r;
+				}),
+		);
+		const turn = agent.prompt({ sessionId: "s1", prompt: [] }, clientMock);
+		agent.cancel({ sessionId: "s1" });
+		agent.cancel({ sessionId: "s1" });
+		restore({ cwd: process.cwd() });
+		expect((await turn).stopReason).toBe("cancelled");
+		expect(Adapter.prototype.runPrompt).not.toHaveBeenCalled();
+		spyOn(SessionManager.prototype, "ensure").mockResolvedValue({
+			cwd: process.cwd(),
+		});
+		expect(
+			(await agent.prompt({ sessionId: "s1", prompt: [] }, clientMock))
+				.stopReason,
+		).toBe("end_turn");
+	});
+
 	test("setConfigOption sets option", async () => {
 		const res = await agent.setConfigOption({
 			sessionId: "s1",
@@ -144,7 +324,10 @@ describe("AgyAcpAgent", () => {
 	});
 
 	test("prompt sends the raw prompt text without string injection, regardless of mode", async () => {
-		const runPromptSpy = spyOn(Adapter.prototype, "runPrompt").mockResolvedValue({
+		const runPromptSpy = spyOn(
+			Adapter.prototype,
+			"runPrompt",
+		).mockResolvedValue({
 			stopReason: "end_turn",
 			error: undefined,
 			conversationId: "c1",
@@ -166,7 +349,10 @@ describe("AgyAcpAgent", () => {
 	});
 
 	test("prompt sends raw text unmodified in plan mode (no injected system prompt)", async () => {
-		const runPromptSpy = spyOn(Adapter.prototype, "runPrompt").mockResolvedValue({
+		const runPromptSpy = spyOn(
+			Adapter.prototype,
+			"runPrompt",
+		).mockResolvedValue({
 			stopReason: "end_turn",
 			error: undefined,
 			conversationId: "c1",

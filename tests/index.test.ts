@@ -19,7 +19,7 @@ describe("Root index.ts (CLI args & main logic)", () => {
 		expect(exitCode).toBe(0);
 
 		const stdout = await new Response(proc.stdout).text();
-		expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+		expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
 	});
 
 	test("should exit with 0 and print version for --version flag", async () => {
@@ -31,7 +31,7 @@ describe("Root index.ts (CLI args & main logic)", () => {
 		expect(exitCode).toBe(0);
 
 		const stdout = await new Response(proc.stdout).text();
-		expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+		expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
 	});
 
 	test("unhandled rejection logging", async () => {
