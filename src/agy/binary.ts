@@ -1,9 +1,9 @@
 // Resolve the `agy` executable.
 //
 // Resolution order:
-//   1. bin/agy (or bin/agy.exe)  — placed here by the postinstall script,
-//      which downloads the correct binary from GitHub Releases.
-//   2. $AGY_BIN                  — explicit override for custom builds / CI.
+//   1. $AGY_BIN                  — explicit override for custom builds / CI.
+//   2. bin/agy (or bin/agy.exe)  — placed here by the postinstall script,
+//      which downloads the pinned compatible binary from GitHub Releases.
 //   3. "agy" / "agy.exe"         — falls through to whatever $PATH provides.
 
 import * as fs from "node:fs";
@@ -25,15 +25,14 @@ export function downloadedAgyPath(): string {
 	return path.join(packageRoot, "bin", exe);
 }
 
-/** Resolve the agy binary: downloaded binary → $AGY_BIN → PATH. */
+/** Resolve the agy binary: explicit $AGY_BIN override → downloaded binary → PATH. */
 export function resolveAgyBinary(): string {
+	if (process.env.AGY_BIN) return process.env.AGY_BIN;
 	const downloaded = downloadedAgyPath();
 	try {
 		fs.accessSync(downloaded, fs.constants.X_OK);
 		return downloaded;
 	} catch {
-		return (
-			process.env.AGY_BIN || (process.platform === "win32" ? "agy.exe" : "agy")
-		);
+		return process.platform === "win32" ? "agy.exe" : "agy";
 	}
 }

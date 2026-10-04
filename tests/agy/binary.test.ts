@@ -19,15 +19,14 @@ describe("agy binary resolution", () => {
 		expect(result.includes("agy")).toBe(true);
 	});
 
-	test("resolveAgyBinary should use AGY_BIN if provided and downloaded doesn't exist", () => {
+	test("resolveAgyBinary should use AGY_BIN even when a downloaded binary exists", () => {
 		process.env.AGY_BIN = "/custom/path/to/agy";
 
-		spyOn(fs, "accessSync").mockImplementation(() => {
-			throw new Error("not found");
-		});
+		const access = spyOn(fs, "accessSync").mockImplementation(() => {});
 
 		const resolved = resolveAgyBinary();
 		expect(resolved).toBe("/custom/path/to/agy");
+		expect(access).not.toHaveBeenCalled();
 	});
 
 	test("resolveAgyBinary should fallback to 'agy' or 'agy.exe' if AGY_BIN is not set", () => {

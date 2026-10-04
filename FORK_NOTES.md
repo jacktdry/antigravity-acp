@@ -17,12 +17,26 @@ configuration surface.
 - `session/close` and `session/delete` wait for active prompt cleanup before
   evicting or deleting session state.
 - `/usage` uses the same tracked child-process lifecycle as normal prompts.
+- Explicit `AGY_BIN` takes precedence over the adapter's bundled/downloaded
+  AGY binary so AgentDock can pin the authenticated system CLI intentionally.
 - Concurrent turns for one ACP session are rejected instead of replacing the
   process currently being managed.
 - AGY's concrete model variants are presented as separate `Model` and
   `Reasoning effort` ACP config options while preserving the exact concrete
   model ID in persisted session state.
 - Model selection never synthesizes an ID that `agy models` did not advertise.
+
+## AgentDock runtime layout
+
+AgentDock should run the adapter with an isolated `HOME` so `agy` does not
+start the user's interactive MCP/plugin configuration for every delegated turn.
+The isolated home can symlink only `~/.gemini/antigravity-cli` from the real
+home to share Antigravity authentication and conversation databases while
+leaving `~/.gemini/config` absent. AgentDock should also provide `AGY_BIN`
+pointing at the authenticated, up-to-date system `agy` executable.
+
+The ACP profile should pass those values with AgentDock's per-profile
+`env_from_env` mapping rather than adding a second AGY execution path.
 
 ## Updating from upstream
 
