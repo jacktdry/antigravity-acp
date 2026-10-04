@@ -96,6 +96,7 @@ describe("AgyAcpAgent", () => {
 			url: "http://127.0.0.1:3210/internal/acp-browser/mcp",
 			token: "test-capability",
 		};
+		const computerUrl = "http://127.0.0.1:3210/internal/acp-computer/mcp";
 		const mcpServers = [
 			{
 				name: "agentdock-browser",
@@ -103,7 +104,14 @@ describe("AgyAcpAgent", () => {
 				url: broker.url,
 				headers: [{ name: "Authorization", value: `Bearer ${broker.token}` }],
 			},
+			{
+				name: "agentdock-computer",
+				type: "http",
+				url: computerUrl,
+				headers: [{ name: "Authorization", value: `Bearer ${broker.token}` }],
+			},
 		];
+		const combinedBroker = { ...broker, computerUrl };
 		const cleanup = spyOn(
 			Adapter.prototype,
 			"cleanupBrowserSession",
@@ -137,13 +145,15 @@ describe("AgyAcpAgent", () => {
 					clientMock,
 				);
 				expect(Adapter.prototype.runPrompt.mock.calls.at(-1)[4]).toEqual(
-					broker,
+					combinedBroker,
 				);
 				await agent.prompt(
 					{ sessionId: "s1", prompt: [{ type: "text", text: "/usage" }] },
 					clientMock,
 				);
-				expect(Adapter.prototype.runUsage.mock.calls.at(-1)[2]).toEqual(broker);
+				expect(Adapter.prototype.runUsage.mock.calls.at(-1)[2]).toEqual(
+					combinedBroker,
+				);
 				await agent.closeSession({ sessionId: "s1" });
 				await expect(
 					agent.prompt({ sessionId: "s1", prompt: [] }, clientMock),

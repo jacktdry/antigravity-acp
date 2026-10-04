@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0-agentdock.5] - 2026-10-04
+
+### Added
+- **AgentDock Computer Control Broker support**: AgentDock-launched sessions now retain the host-owned `agentdock-computer` HTTP MCP capability alongside `agentdock-browser`, using the same per-session bearer capability while keeping the two tool surfaces separate.
+- **Computer-only AgentDock mode**: When Browser Broker is disabled, the private AGY child sandbox can still expose AgentDock Computer Control without inheriting global browser or Computer Use plugins.
+
+### Security
+- **Strict loopback capability validation**: Browser and Computer Broker URLs are accepted only as exact loopback HTTP endpoints; alternate IPv4 spellings, integer hosts, path normalization tricks, credentials, queries, fragments, and token mismatches are rejected.
+- **No global Computer Use fallback**: The AGY child continues to disable global browser plugins/MCP configuration; Computer Control is available only through the AgentDock-provided loopback proxy.
+
 ## [1.2.0-agentdock.4] - 2026-10-04
 
 ### Fixed

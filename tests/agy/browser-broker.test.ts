@@ -30,6 +30,24 @@ const server = (url = binding.url, token = binding.token) => ({
 	url,
 	headers: [{ name: "Authorization", value: `Bearer ${token}` }],
 });
+const computerBinding = {
+	url: "http://127.0.0.1:3210/internal/acp-computer/mcp",
+	token: binding.token,
+};
+const computerServer = (
+	url = computerBinding.url,
+	token = computerBinding.token,
+) => ({
+	name: "agentdock-computer",
+	type: "http",
+	url,
+	headers: [{ name: "Authorization", value: `Bearer ${token}` }],
+});
+const combinedBinding = {
+	url: binding.url,
+	computerUrl: computerBinding.url,
+	token: binding.token,
+};
 let required: string | undefined;
 beforeEach(() => {
 	required = process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED;
@@ -51,6 +69,37 @@ describe("broker binding", () => {
 			])?.url,
 		).toContain("[::1]");
 	});
+	test("retains Browser and Computer Broker capabilities with one shared token", () => {
+		expect(parseBrowserBrokerBinding([server(), computerServer()])).toEqual(
+			combinedBinding,
+		);
+		expect(() =>
+			parseBrowserBrokerBinding([
+				server(),
+				computerServer(undefined, "other-token"),
+			]),
+		).toThrow();
+	});
+	test("browser-disabled AgentDock mode may retain a computer-only capability", () => {
+		const previousRequired = process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED;
+		const previousDisabled = process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED;
+		delete process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED;
+		process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED = "1";
+		try {
+			expect(parseBrowserBrokerBinding([computerServer()])).toEqual({
+				url: null,
+				computerUrl: computerBinding.url,
+				token: binding.token,
+			});
+		} finally {
+			if (previousRequired === undefined)
+				delete process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED;
+			else process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED = previousRequired;
+			if (previousDisabled === undefined)
+				delete process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED;
+			else process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED = previousDisabled;
+		}
+	});
 	for (const url of [
 		"https://127.0.0.1/internal/acp-browser/mcp",
 		"http://example.com/internal/acp-browser/mcp",
@@ -66,6 +115,19 @@ describe("broker binding", () => {
 	]) {
 		test(`rejects unsafe URL ${url}`, () => {
 			expect(() => parseBrowserBrokerBinding([server(url)])).toThrow();
+		});
+	}
+	for (const url of [
+		"https://127.0.0.1/internal/acp-computer/mcp",
+		"http://127.1/internal/acp-computer/mcp",
+		"http://2130706433/internal/acp-computer/mcp",
+		"http://localhost/internal/acp-browser/mcp",
+		"http://localhost/a/../internal/acp-computer/mcp",
+	]) {
+		test(`rejects unsafe Computer Broker URL ${url}`, () => {
+			expect(() =>
+				parseBrowserBrokerBinding([server(), computerServer(url)]),
+			).toThrow();
 		});
 	}
 	test("required mode rejects missing, duplicate and malformed capabilities", () => {
@@ -145,7 +207,7 @@ describe("private child HOME", () => {
 					];
 				});
 		const before = snapshot();
-		const env = prepareAgyBrokerEnvironment("../unsafe", binding)!;
+		const env = prepareAgyBrokerEnvironment("../unsafe", combinedBinding)!;
 		const read = (file: string) =>
 			JSON.parse(
 				fs.readFileSync(path.join(env.HOME!, ".gemini", file), "utf8"),
@@ -153,8 +215,12 @@ describe("private child HOME", () => {
 		expect(read("config/mcp_config.json").mcpServers).toHaveProperty(
 			"agentdock-browser",
 		);
+		expect(read("config/mcp_config.json").mcpServers).toHaveProperty(
+			"agentdock-computer",
+		);
 		expect(Object.keys(read("config/mcp_config.json").mcpServers)).toEqual([
 			"agentdock-browser",
+			"agentdock-computer",
 		]);
 		expect(read("settings.json").mcpServers).toBeUndefined();
 		expect(
@@ -182,10 +248,10 @@ describe("private child HOME", () => {
 		expect(env.AGENTDOCK_BROWSER_BROKER_TOKEN).toBe(binding.token);
 		expect(env.USERPROFILE).toBe(env.HOME);
 		expect(env.XDG_CONFIG_HOME).toStartWith(env.HOME!);
-		expect(prepareAgyBrokerEnvironment("../unsafe", binding)?.HOME).toBe(
-			env.HOME,
-		);
-		const other = prepareAgyBrokerEnvironment("second", binding)!;
+		expect(
+			prepareAgyBrokerEnvironment("../unsafe", combinedBinding)?.HOME,
+		).toBe(env.HOME);
+		const other = prepareAgyBrokerEnvironment("second", combinedBinding)!;
 		expect(other.HOME).not.toBe(env.HOME);
 		cleanupAgyBrokerHome("../unsafe");
 		expect(fs.existsSync(env.HOME!)).toBe(false);
@@ -317,6 +383,46 @@ describe("HTTP proxy", () => {
 		expect(calls[2].headers["mcp-session-id"]).toBe("transport-session");
 		expect(calls[2].headers["mcp-protocol-version"]).toBe("2025-03-26");
 		expect(calls[0].headers.authorization).toBe(`Bearer ${binding.token}`);
+	});
+	test("forwards the Computer Broker endpoint with the same env-only token", async () => {
+		const calls: any[] = [];
+		http = Bun.serve({
+			hostname: "127.0.0.1",
+			port: 0,
+			async fetch(req) {
+				const rpc = (await req.json()) as Record<string, any>;
+				calls.push({ rpc, headers: Object.fromEntries(req.headers) });
+				return Response.json({
+					jsonrpc: "2.0",
+					id: rpc.id,
+					result:
+						rpc.method === "initialize"
+							? { protocolVersion: "2025-03-26" }
+							: { tools: [{ name: "computer_acquire" }] },
+				});
+			},
+		});
+		const proxy = new BrowserBrokerProxy({
+			url: `http://127.0.0.1:${http.port}/internal/acp-computer/mcp`,
+			token: binding.token,
+		});
+		const output: string[] = [];
+		await proxy.forward(
+			'{"jsonrpc":"2.0","id":11,"method":"initialize"}',
+			(line) => output.push(line),
+		);
+		await proxy.forward(
+			'{"jsonrpc":"2.0","id":12,"method":"tools/list"}',
+			(line) => output.push(line),
+		);
+		expect(JSON.parse(output[1]!).result.tools[0].name).toBe(
+			"computer_acquire",
+		);
+		expect(
+			calls.every(
+				(call) => call.headers.authorization === `Bearer ${binding.token}`,
+			),
+		).toBe(true);
 	});
 	for (const status of [401, 500, 302])
 		test(`safe JSON-RPC error for HTTP ${status}`, async () => {

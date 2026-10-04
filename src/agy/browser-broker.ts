@@ -4,7 +4,8 @@ import * as path from "node:path";
 import { createInterface } from "node:readline";
 
 export interface BrowserBrokerBinding {
-	url: string;
+	url: string | null;
+	computerUrl?: string | null;
 	token: string;
 }
 
@@ -17,6 +18,9 @@ type MCPServer = {
 };
 
 const BROKER_SERVER_NAME = "agentdock-browser";
+const COMPUTER_SERVER_NAME = "agentdock-computer";
+const BROWSER_PATH = "/internal/acp-browser/mcp";
+const COMPUTER_PATH = "/internal/acp-computer/mcp";
 const sandboxHomes = new Map<string, string>();
 
 function brokerRequired(): boolean {
@@ -27,30 +31,24 @@ function browserBackendsDisabled(): boolean {
 	return process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED === "1";
 }
 
-function parseBinding(mcpServers: unknown): BrowserBrokerBinding | null {
-	if (!Array.isArray(mcpServers)) {
-		if (brokerRequired())
-			throw new Error("AgentDock Browser Broker MCP is required");
-		return null;
-	}
+function parseNamedBinding(
+	mcpServers: unknown[],
+	serverName: string,
+	pathName: string,
+): { url: string; token: string } | null {
 	const matches = mcpServers.filter(
 		(item) =>
 			item &&
 			typeof item === "object" &&
-			(item as MCPServer).name === BROKER_SERVER_NAME,
+			(item as MCPServer).name === serverName,
 	) as MCPServer[];
-	if (matches.length > 1)
-		throw new Error("Duplicate AgentDock Browser Broker MCP");
+	if (matches.length > 1) throw new Error(`Duplicate ${serverName} MCP`);
 	const raw = matches[0];
-	if (!raw) {
-		if (brokerRequired())
-			throw new Error("AgentDock Browser Broker MCP is required");
-		return null;
-	}
+	if (!raw) return null;
 	if (raw.type !== "http" || typeof raw.url !== "string") {
-		throw new Error("AgentDock Browser Broker MCP must use HTTP transport");
+		throw new Error(`${serverName} MCP must use HTTP transport`);
 	}
-	const url = validateBrokerURL(raw.url);
+	const url = validateControlURL(raw.url, pathName, serverName);
 	const headers = Array.isArray(raw.headers)
 		? (raw.headers as MCPHeader[])
 		: [];
@@ -64,11 +62,42 @@ function parseBinding(mcpServers: unknown): BrowserBrokerBinding | null {
 			? auth[0].value
 			: "";
 	if (!/^Bearer [A-Za-z0-9._~+/-]+=*$/.test(value)) {
-		throw new Error(
-			"AgentDock Browser Broker authorization is missing or invalid",
-		);
+		throw new Error(`${serverName} authorization is missing or invalid`);
 	}
 	return { url, token: value.slice("Bearer ".length) };
+}
+
+function parseBinding(mcpServers: unknown): BrowserBrokerBinding | null {
+	if (!Array.isArray(mcpServers)) {
+		if (brokerRequired())
+			throw new Error("AgentDock Browser Broker MCP is required");
+		return null;
+	}
+	const browser = parseNamedBinding(
+		mcpServers,
+		BROKER_SERVER_NAME,
+		BROWSER_PATH,
+	);
+	const computer = parseNamedBinding(
+		mcpServers,
+		COMPUTER_SERVER_NAME,
+		COMPUTER_PATH,
+	);
+	if (!browser && brokerRequired()) {
+		throw new Error("AgentDock Browser Broker MCP is required");
+	}
+	if (!browser && !computer) return null;
+	const firstBinding = browser ?? computer;
+	if (!firstBinding) return null;
+	const token = firstBinding.token;
+	if (browser && computer && browser.token !== computer.token) {
+		throw new Error("AgentDock Broker MCP capabilities must share one token");
+	}
+	return {
+		url: browser?.url ?? null,
+		...(computer ? { computerUrl: computer.url } : {}),
+		token,
+	};
 }
 
 export function parseBrowserBrokerBinding(
@@ -77,38 +106,38 @@ export function parseBrowserBrokerBinding(
 	try {
 		return parseBinding(mcpServers);
 	} catch (error) {
-		if (brokerRequired()) throw error;
+		if (brokerRequired() || browserBackendsDisabled()) throw error;
 		return null;
 	}
 }
 
-function validateBrokerURL(raw: string): string {
+function validateControlURL(
+	raw: string,
+	expectedPath: string,
+	label = "AgentDock Broker",
+): string {
+	const escapedPath = expectedPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const exactLoopback = new RegExp(
+		`^http://(?:127.0.0.1|localhost|\\[::1\\])(?::[1-9][0-9]*)?${escapedPath}$`,
+	);
+	if (!exactLoopback.test(raw)) {
+		throw new Error(`${label} must use exact loopback HTTP`);
+	}
 	let parsed: URL;
 	try {
 		parsed = new URL(raw);
 	} catch {
-		throw new Error("AgentDock Browser Broker URL is invalid");
+		throw new Error(`${label} URL is invalid`);
 	}
-	if (
-		!/^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::[1-9][0-9]*)?\/internal\/acp-browser\/mcp$/.test(
-			raw,
-		) ||
-		parsed.protocol !== "http:" ||
-		parsed.username ||
-		parsed.password
-	) {
-		throw new Error("AgentDock Browser Broker must use loopback HTTP");
+	if (parsed.protocol !== "http:" || parsed.username || parsed.password) {
+		throw new Error(`${label} must use loopback HTTP`);
 	}
 	const host = parsed.hostname.toLowerCase();
 	if (host !== "localhost" && host !== "127.0.0.1" && host !== "[::1]") {
-		throw new Error("AgentDock Browser Broker must use a loopback host");
+		throw new Error(`${label} must use a loopback host`);
 	}
-	if (
-		parsed.pathname !== "/internal/acp-browser/mcp" ||
-		parsed.search ||
-		parsed.hash
-	) {
-		throw new Error("AgentDock Browser Broker URL path is invalid");
+	if (parsed.pathname !== expectedPath || parsed.search || parsed.hash) {
+		throw new Error(`${label} URL path is invalid`);
 	}
 	return parsed.toString();
 }
@@ -173,6 +202,8 @@ export function prepareAgyBrokerEnvironment(
 			return prepareChildEnvironment(sessionId, null);
 		return undefined;
 	}
+	if (brokerRequired() && !binding.url)
+		throw new Error("AgentDock Browser Broker MCP is required");
 	return prepareChildEnvironment(sessionId, binding);
 }
 
@@ -186,7 +217,16 @@ function prepareChildEnvironment(
 	sessionId: string,
 	binding: BrowserBrokerBinding | null,
 ): Record<string, string> {
-	const url = binding ? validateBrokerURL(binding.url) : null;
+	const url = binding?.url
+		? validateControlURL(binding.url, BROWSER_PATH, BROKER_SERVER_NAME)
+		: null;
+	const computerUrl = binding?.computerUrl
+		? validateControlURL(
+				binding.computerUrl,
+				COMPUTER_PATH,
+				COMPUTER_SERVER_NAME,
+			)
+		: null;
 	if (binding && !/^[A-Za-z0-9._~+/-]+=*$/.test(binding.token))
 		throw new Error("Invalid Browser Broker token");
 	const sourceGemini = path.join(os.homedir(), ".gemini");
@@ -204,17 +244,22 @@ function prepareChildEnvironment(
 		security: settings.security,
 	});
 	const proxy = selfProxyCommand();
-	writeJSON(path.join(sandboxConfig, "mcp_config.json"), {
-		mcpServers: binding
-			? {
-					[BROKER_SERVER_NAME]: {
-						command: proxy.command,
-						args: [...proxy.args, "--agentdock-browser-proxy", url],
-						disabled: false,
-					},
-				}
-			: {},
-	});
+	const mcpServers: Record<string, unknown> = {};
+	if (url) {
+		mcpServers[BROKER_SERVER_NAME] = {
+			command: proxy.command,
+			args: [...proxy.args, "--agentdock-browser-proxy", url],
+			disabled: false,
+		};
+	}
+	if (computerUrl) {
+		mcpServers[COMPUTER_SERVER_NAME] = {
+			command: proxy.command,
+			args: [...proxy.args, "--agentdock-browser-proxy", computerUrl],
+			disabled: false,
+		};
+	}
+	writeJSON(path.join(sandboxConfig, "mcp_config.json"), { mcpServers });
 	writeJSON(path.join(sandboxConfig, "config.json"), {
 		plugins: { "chrome-devtools-plugin": { enabled: false } },
 	});
@@ -302,8 +347,11 @@ function rpcFailure(line: string, message: string): string | null {
 export class BrowserBrokerProxy {
 	private sessionId: string | null = null;
 	private protocolVersion: string | null = null;
-	constructor(private readonly binding: BrowserBrokerBinding) {
-		validateBrokerURL(binding.url);
+	constructor(private readonly binding: { url: string; token: string }) {
+		const parsed = new URL(binding.url);
+		const expected =
+			parsed.pathname === COMPUTER_PATH ? COMPUTER_PATH : BROWSER_PATH;
+		validateControlURL(binding.url, expected);
 		if (binding && !/^[A-Za-z0-9._~+/-]+=*$/.test(binding.token))
 			throw new Error("Invalid Browser Broker token");
 	}

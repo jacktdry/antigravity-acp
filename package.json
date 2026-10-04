@@ -1,7 +1,7 @@
 {
 	"name": "antigravity-acp",
 	"description": "An Agent Client Protocol (ACP) server for Google Antigravity's `agy` CLI, built on Bun. Connects ACP-compatible editors to drive `agy` with live streaming and history replay.",
-	"version": "1.2.0-agentdock.4",
+	"version": "1.2.0-agentdock.5",
 	"module": "index.ts",
 	"type": "module",
 	"bin": {
