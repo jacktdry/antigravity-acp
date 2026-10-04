@@ -1,5 +1,10 @@
 import * as fs from "node:fs";
 import {
+	type BrowserBrokerBinding,
+	cleanupAgyBrokerHome,
+	prepareAgyBrokerEnvironment,
+} from "../agy/browser-broker";
+import {
 	buildAgyArgs,
 	extraArgsFromEnv,
 	preparePromptArg,
@@ -113,13 +118,19 @@ export class Adapter {
 		return { active, clearTimer };
 	}
 
+	cleanupBrowserSession(sessionId: string): void {
+		cleanupAgyBrokerHome(sessionId);
+	}
+
 	/** /usage has stdout output, but shares the prompt cancellation lifecycle. */
 	async runUsage(
 		sessionId: string,
 		cwd: string,
+		broker: BrowserBrokerBinding | null = null,
 	): Promise<{ text: string; cancelled: boolean }> {
 		if (this.children.has(sessionId))
 			throw new Error("a prompt is already active for this session");
+		const brokerEnv = prepareAgyBrokerEnvironment(sessionId, broker);
 		let child: Bun.Subprocess;
 		try {
 			child = Bun.spawn([this.config.binary, "-p", "/usage"], {
@@ -127,6 +138,7 @@ export class Adapter {
 				stdin: "ignore",
 				stdout: "pipe",
 				stderr: "ignore",
+				env: brokerEnv ? { ...process.env, ...brokerEnv } : undefined,
 			});
 		} catch {
 			return { text: "", cancelled: false };
@@ -156,6 +168,7 @@ export class Adapter {
 		session: Session,
 		promptText: string,
 		client: AcpClient,
+		broker: BrowserBrokerBinding | null = null,
 	): Promise<PromptOutcome> {
 		if (this.children.has(sessionId)) {
 			throw new Error("a prompt is already active for this session");
@@ -163,6 +176,18 @@ export class Adapter {
 
 		// Use the session's cwd if set, otherwise fall back to the server's workingDir.
 		const effectiveCwd = session.cwd || this.config.workingDir;
+		let brokerEnv: Record<string, string> | undefined;
+		try {
+			brokerEnv = prepareAgyBrokerEnvironment(sessionId, broker);
+		} catch (err) {
+			return {
+				stopReason: "end_turn",
+				conversationId: session.conversationId,
+				lastStepIdx: session.lastStepIdx,
+				hadUpdates: false,
+				error: `failed to prepare AgentDock Browser Broker: ${(err as Error).message}`,
+			};
+		}
 
 		// Snapshot existing conversations so we can bind the new DB agy creates.
 		const snapshot =
@@ -185,7 +210,7 @@ export class Adapter {
 
 		let child: Bun.Subprocess;
 		try {
-			child = spawnAgy(this.config.binary, args, effectiveCwd);
+			child = spawnAgy(this.config.binary, args, effectiveCwd, brokerEnv);
 		} catch (err) {
 			if (tempFilePath) {
 				try {

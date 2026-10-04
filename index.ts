@@ -6,9 +6,12 @@ import * as path from "node:path";
 import pkg from "./package.json";
 import { runAcp } from "./src/acp/server";
 import { downloadedAgyPath } from "./src/agy/binary";
+import { runBrowserBrokerProxyFromArgs } from "./src/agy/browser-broker";
 import { ensureAgy } from "./src/agy/installer";
 
 async function main(): Promise<void> {
+	if (await runBrowserBrokerProxyFromArgs()) return;
+
 	if (process.argv.includes("--version") || process.argv.includes("-v")) {
 		process.stdout.write(`${pkg.version}\n`);
 		process.exit(0);

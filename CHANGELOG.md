@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0-agentdock.3] - 2026-10-04
+
+### Added
+- **AgentDock Browser Broker support**: ACP `session/new`, `session/load`, and `session/resume` now retain the AgentDock-injected `agentdock-browser` MCP capability and pass it to AGY through a loopback-only stdio proxy.
+- **Per-session AGY child sandbox**: AgentDock-launched AGY children use a private HOME/config that preserves required authentication and conversation state without inheriting the user's global browser MCP or plugins.
+
+### Security
+- **Browser backend ownership**: AgentDock child sessions reject missing or unsafe Browser Broker capabilities when `AGENTDOCK_BROWSER_BROKER_REQUIRED=1`; global `chrome-devtools` and `chrome-devtools-plugin` are not loaded in the child sandbox.
+- **Capability isolation**: Browser Broker bearer tokens stay out of URLs and config files and are supplied to the proxy through the child environment only.
+- **Standalone CLI preserved**: Direct `agy` usage continues to read the user's normal `~/.gemini` configuration and is not modified by the ACP sandbox.
+
+### Fixed
+- **Model discovery isolation**: Background `agy models` discovery now runs in a browser-free temporary HOME instead of inheriting the user's global MCP configuration.
+- **Session cleanup**: Closing or deleting an ACP session removes only that session's temporary Browser Broker HOME while preserving shared authentication and conversation targets.
+
 ## [1.2.0] - 2026-09-27
 
 ### Added

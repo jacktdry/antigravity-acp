@@ -3,6 +3,10 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import {
+	cleanupAgyBrokerHome,
+	prepareAgyModelEnvironment,
+} from "./browser-broker";
 
 // Linux MAX_ARG_STRLEN is 128KB; stay well below it to prevent E2BIG errors.
 export const MAX_PROMPT_ARG_LENGTH = 64 * 1024;
@@ -34,9 +38,14 @@ export interface DiscoveredModel {
 
 /** Query agy for the list of available models (empty on any failure).
  *  Uses async spawn to avoid blocking the event loop (~5s for `agy models`). */
-export async function discoverModels(binary: string): Promise<DiscoveredModel[]> {
+export async function discoverModels(
+	binary: string,
+): Promise<DiscoveredModel[]> {
+	const sandboxId = `model-discovery-${crypto.randomUUID()}`;
 	try {
+		const env = prepareAgyModelEnvironment(sandboxId);
 		const proc = Bun.spawn([binary, "models"], {
+			env: { ...process.env, ...env },
 			stdin: "ignore",
 			stdout: "pipe",
 			stderr: "ignore",
@@ -56,6 +65,8 @@ export async function discoverModels(binary: string): Promise<DiscoveredModel[]>
 			});
 	} catch {
 		return [];
+	} finally {
+		cleanupAgyBrokerHome(sandboxId);
 	}
 }
 
@@ -104,12 +115,14 @@ export function spawnAgy(
 	binary: string,
 	args: string[],
 	cwd: string,
+	env?: Record<string, string>,
 ): Bun.Subprocess<"ignore", "ignore", "pipe"> {
 	return Bun.spawn([binary, ...args], {
 		cwd,
 		stdin: "ignore",
 		stdout: "ignore",
 		stderr: "pipe",
+		env: env ? { ...process.env, ...env } : undefined,
 	});
 }
 

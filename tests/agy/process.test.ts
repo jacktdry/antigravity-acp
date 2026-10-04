@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import {
-	MAX_PROMPT_ARG_LENGTH,
 	buildAgyArgs,
 	discoverModels,
 	extraArgsFromEnv,
+	MAX_PROMPT_ARG_LENGTH,
 	preparePromptArg,
 	spawnAgy,
 } from "../../src/agy/process";
@@ -22,11 +22,15 @@ describe("agy/process.ts", () => {
 			} as any);
 
 			const models = await discoverModels("dummy-binary");
-			expect(mockSpawn).toHaveBeenCalledWith(["dummy-binary", "models"], {
-				stdin: "ignore",
-				stdout: "pipe",
-				stderr: "ignore",
-			});
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			const spawnOptions = mockSpawn.mock.calls[0]![1] as any;
+			expect(mockSpawn.mock.calls[0]![0]).toEqual(["dummy-binary", "models"]);
+			expect(spawnOptions.stdin).toBe("ignore");
+			expect(spawnOptions.stdout).toBe("pipe");
+			expect(spawnOptions.stderr).toBe("ignore");
+			expect(spawnOptions.env.HOME).toBeTruthy();
+			expect(spawnOptions.env.HOME).not.toBe(process.env.HOME);
+			expect(spawnOptions.env.AGENTDOCK_BROWSER_BROKER_TOKEN).toBe("");
 			expect(models).toEqual([
 				{ value: "model-1", name: "model-1" },
 				{ value: "model-2", name: "model-2" },
@@ -308,9 +312,12 @@ describe("agy/process.ts", () => {
 			expect(res.tempFilePath).toBeDefined();
 			expect(res.promptArg).toContain("Please read the prompt and context in");
 			expect(res.promptArg).toContain(res.tempFilePath!);
-			
+
 			// Verify file content
-			const content = require("node:fs").readFileSync(res.tempFilePath!, "utf-8");
+			const content = require("node:fs").readFileSync(
+				res.tempFilePath!,
+				"utf-8",
+			);
 			expect(content).toBe(huge);
 
 			// Clean up

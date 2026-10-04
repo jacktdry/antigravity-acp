@@ -24,7 +24,6 @@ function stdoutWritable(): WritableStream<Uint8Array> {
 /** Identity parser for raw (non-builtin) ACP methods. */
 const raw = <T>() => ({ parse: (p: unknown) => p as T });
 
-
 type SetSessionModelParams = { sessionId?: string; modelId?: string };
 
 export function runAcp() {
@@ -49,7 +48,11 @@ export function runAcp() {
 		.onRequest(methods.agent.logout, () => agentImpl.logout())
 		.onRequest(methods.agent.session.new, (ctx) =>
 			agentImpl.newSession(
-				ctx.params as { cwd?: string; additionalDirectories?: string[] },
+				ctx.params as {
+					cwd?: string;
+					additionalDirectories?: string[];
+					mcpServers?: unknown;
+				},
 				new AcpClient(ctx.client),
 			),
 		)
@@ -59,6 +62,7 @@ export function runAcp() {
 					sessionId?: string;
 					cwd?: string;
 					additionalDirectories?: string[];
+					mcpServers?: unknown;
 				},
 				new AcpClient(ctx.client),
 			),
@@ -69,6 +73,7 @@ export function runAcp() {
 					sessionId?: string;
 					cwd?: string;
 					additionalDirectories?: string[];
+					mcpServers?: unknown;
 				},
 				new AcpClient(ctx.client),
 			),
@@ -98,19 +103,21 @@ export function runAcp() {
 			});
 			return {};
 		})
-		.onRequest("session/set_model", raw<SetSessionModelParams>(), async (ctx) => {
-			await agentImpl.setConfigOption({
-				sessionId: ctx.params.sessionId,
-				configId: "model",
-				value: ctx.params.modelId,
-			});
-			return {};
-		})
+		.onRequest(
+			"session/set_model",
+			raw<SetSessionModelParams>(),
+			async (ctx) => {
+				await agentImpl.setConfigOption({
+					sessionId: ctx.params.sessionId,
+					configId: "model",
+					value: ctx.params.modelId,
+				});
+				return {};
+			},
+		)
 		// Custom endpoint — not part of the ACP spec. Lets clients discover
 		// available models for the session/setConfigOption "model" option.
-		.onRequest("models/list", raw<unknown>(), () =>
-			agentImpl.listModels(),
-		)
+		.onRequest("models/list", raw<unknown>(), () => agentImpl.listModels())
 		.onRequest("resources/list", raw<unknown>(), () =>
 			agentImpl.listResources(),
 		)

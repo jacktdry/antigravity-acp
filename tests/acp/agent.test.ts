@@ -89,6 +89,79 @@ describe("AgyAcpAgent", () => {
 		expect(res.sessionId).toBe("s1");
 	});
 
+	test("new/load/resume retain broker for prompt and usage; close/delete clear it", async () => {
+		const old = process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED;
+		process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED = "1";
+		const broker = {
+			url: "http://127.0.0.1:3210/internal/acp-browser/mcp",
+			token: "test-capability",
+		};
+		const mcpServers = [
+			{
+				name: "agentdock-browser",
+				type: "http",
+				url: broker.url,
+				headers: [{ name: "Authorization", value: `Bearer ${broker.token}` }],
+			},
+		];
+		const cleanup = spyOn(
+			Adapter.prototype,
+			"cleanupBrowserSession",
+		).mockImplementation(() => {});
+		spyOn(Adapter.prototype, "runUsage").mockResolvedValue({
+			text: "usage",
+			cancelled: false,
+		});
+		try {
+			expect(() => agent.newSession({}, clientMock)).toThrow();
+			await expect(
+				agent.loadSession({ sessionId: "s1" }, clientMock),
+			).rejects.toThrow();
+			await expect(
+				agent.resumeSession(
+					{
+						sessionId: "s1",
+						mcpServers: [{ ...mcpServers[0], url: "http://evil" }],
+					},
+					clientMock,
+				),
+			).rejects.toThrow();
+			for (const open of [
+				() => agent.newSession({ mcpServers }, clientMock),
+				() => agent.loadSession({ sessionId: "s1", mcpServers }, clientMock),
+				() => agent.resumeSession({ sessionId: "s1", mcpServers }, clientMock),
+			]) {
+				await open();
+				await agent.prompt(
+					{ sessionId: "s1", prompt: [{ type: "text", text: "hi" }] },
+					clientMock,
+				);
+				expect(Adapter.prototype.runPrompt.mock.calls.at(-1)[4]).toEqual(
+					broker,
+				);
+				await agent.prompt(
+					{ sessionId: "s1", prompt: [{ type: "text", text: "/usage" }] },
+					clientMock,
+				);
+				expect(Adapter.prototype.runUsage.mock.calls.at(-1)[2]).toEqual(broker);
+				await agent.closeSession({ sessionId: "s1" });
+				await expect(
+					agent.prompt({ sessionId: "s1", prompt: [] }, clientMock),
+				).rejects.toThrow();
+			}
+			await agent.resumeSession({ sessionId: "s1", mcpServers }, clientMock);
+			await agent.deleteSession({ sessionId: "s1" });
+			expect(cleanup).toHaveBeenCalledTimes(4);
+			await expect(
+				agent.prompt({ sessionId: "s1", prompt: [] }, clientMock),
+			).rejects.toThrow();
+		} finally {
+			if (old === undefined)
+				delete process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED;
+			else process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED = old;
+		}
+	});
+
 	test("loadSession throws if sessionId is missing", async () => {
 		expect(agent.loadSession({} as any, clientMock)).rejects.toThrow();
 	});

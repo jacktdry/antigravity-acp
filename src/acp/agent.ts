@@ -19,6 +19,10 @@ import type {
 	SetSessionConfigOptionResponse,
 } from "@agentclientprotocol/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
+import {
+	type BrowserBrokerBinding,
+	parseBrowserBrokerBinding,
+} from "../agy/browser-broker";
 import { modelSelection, REASONING_EFFORTS, selectModel } from "../agy/models";
 import { type DiscoveredModel, discoverModels } from "../agy/process";
 import { formatUsageOutput } from "../agy/usage-format";
@@ -76,6 +80,7 @@ export class AgyAcpAgent {
 	private readonly stopping = new Map<string, Promise<void>>();
 	// Tracks which AcpClient is serving each session so async updates can be pushed.
 	private readonly activeClients = new Map<string, AcpClient>();
+	private readonly browserBrokers = new Map<string, BrowserBrokerBinding>();
 
 	constructor(private readonly config: AgentConfig) {
 		this.sessions = new SessionManager(new SessionStore());
@@ -195,12 +200,18 @@ export class AgyAcpAgent {
 	}
 
 	newSession(
-		params: { cwd?: string; additionalDirectories?: string[] },
+		params: {
+			cwd?: string;
+			additionalDirectories?: string[];
+			mcpServers?: unknown;
+		},
 		client: AcpClient,
 	): NewSessionResponse {
+		const broker = this.parseSessionBrowserBroker(params.mcpServers);
 		const cwd = params.cwd || this.config.workingDir;
 		const additionalDirs = params.additionalDirectories ?? [];
 		const { sessionId, session } = this.sessions.create(cwd, additionalDirs);
+		this.setSessionBrowserBroker(sessionId, broker);
 		this.activeClients.set(sessionId, client);
 		this.announceSession(client, sessionId, session);
 		return { sessionId, ...this.configResult(session) };
@@ -211,10 +222,12 @@ export class AgyAcpAgent {
 			sessionId?: string;
 			cwd?: string;
 			additionalDirectories?: string[];
+			mcpServers?: unknown;
 		},
 		client: AcpClient,
 	): Promise<LoadSessionResponse> {
 		const sessionId = this.requireSessionId(params.sessionId);
+		const broker = this.parseSessionBrowserBroker(params.mcpServers);
 		const session = await this.sessions.ensure(sessionId);
 		if (!session) throw RequestError.resourceNotFound(sessionId);
 
@@ -240,6 +253,7 @@ export class AgyAcpAgent {
 			}
 		}
 
+		this.setSessionBrowserBroker(sessionId, broker);
 		this.activeClients.set(sessionId, client);
 		this.announceSession(client, sessionId, session);
 		return this.configResult(session);
@@ -250,10 +264,12 @@ export class AgyAcpAgent {
 			sessionId?: string;
 			cwd?: string;
 			additionalDirectories?: string[];
+			mcpServers?: unknown;
 		},
 		client: AcpClient,
 	): Promise<ResumeSessionResponse> {
 		const sessionId = this.requireSessionId(params.sessionId);
+		const broker = this.parseSessionBrowserBroker(params.mcpServers);
 		const session = await this.sessions.ensure(sessionId);
 		if (!session) throw RequestError.resourceNotFound(sessionId);
 
@@ -268,6 +284,7 @@ export class AgyAcpAgent {
 		}
 		if (dirty) await this.sessions.persist(sessionId, session);
 
+		this.setSessionBrowserBroker(sessionId, broker);
 		this.activeClients.set(sessionId, client);
 		this.announceSession(client, sessionId, session);
 		return this.configResult(session);
@@ -333,6 +350,7 @@ export class AgyAcpAgent {
 		client: AcpClient,
 	): Promise<PromptResponse> {
 		const sessionId = this.requireSessionId(params.sessionId);
+		const broker = this.browserBrokerForSession(sessionId);
 
 		let session = await this.sessions.ensure(sessionId);
 		if (this.stopping.has(sessionId) || this.cancelledPrompts.has(sessionId))
@@ -349,6 +367,7 @@ export class AgyAcpAgent {
 			const { text: output, cancelled } = await this.adapter.runUsage(
 				sessionId,
 				session.cwd,
+				broker,
 			);
 			if (cancelled) return { stopReason: "cancelled" };
 			await client.update(sessionId, {
@@ -366,6 +385,7 @@ export class AgyAcpAgent {
 			session,
 			rawText,
 			client,
+			broker,
 		);
 
 		// Record the steps even when the turn failed, so the next prompt does not
@@ -460,6 +480,37 @@ export class AgyAcpAgent {
 
 	// --- helpers -------------------------------------------------------------
 
+	private parseSessionBrowserBroker(
+		mcpServers: unknown,
+	): BrowserBrokerBinding | null {
+		try {
+			return parseBrowserBrokerBinding(mcpServers);
+		} catch (err) {
+			throw RequestError.invalidParams(undefined, (err as Error).message);
+		}
+	}
+
+	private setSessionBrowserBroker(
+		sessionId: string,
+		binding: BrowserBrokerBinding | null,
+	): void {
+		if (binding) this.browserBrokers.set(sessionId, binding);
+		else this.browserBrokers.delete(sessionId);
+	}
+
+	private browserBrokerForSession(
+		sessionId: string,
+	): BrowserBrokerBinding | null {
+		const binding = this.browserBrokers.get(sessionId) ?? null;
+		if (!binding && process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED === "1") {
+			throw RequestError.invalidParams(
+				undefined,
+				"AgentDock Browser Broker MCP is required for this session",
+			);
+		}
+		return binding;
+	}
+
 	private stopSession(sessionId: string, remove: boolean): Promise<void> {
 		const existing = this.stopping.get(sessionId);
 		if (existing)
@@ -476,6 +527,8 @@ export class AgyAcpAgent {
 				this.sessions.evict(sessionId);
 			}
 			this.activeClients.delete(sessionId);
+			this.browserBrokers.delete(sessionId);
+			this.adapter.cleanupBrowserSession(sessionId);
 		})();
 		const completion = stopped.finally(() => this.stopping.delete(sessionId));
 		this.stopping.set(sessionId, completion);
