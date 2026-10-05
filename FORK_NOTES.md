@@ -38,6 +38,20 @@ pointing at the authenticated, up-to-date system `agy` executable.
 The ACP profile should pass those values with AgentDock's per-profile
 `env_from_env` mapping rather than adding a second AGY execution path.
 
+### macOS Keychain prerequisite
+
+The official AGY CLI uses the operating system secure keyring for OAuth tokens.
+On macOS this means the `Antigravity CLI` item in Apple Keychain. If that
+item's Access Control does not authorize the configured `AGY_BIN` (for the
+current AgentDock setup, `/Users/wei/.local/bin/agy`), every short-lived AGY
+child can trigger another Keychain authorization prompt.
+
+This is not an ACP lifecycle leak and must not be worked around by modifying
+login-keychain ACLs, trust, or passwords from AgentDock. The user should grant
+the Google-signed `agy` binary access explicitly in Keychain Access. Until
+that prerequisite is satisfied, do not run prompt-count stress tests that
+would intentionally spawn many AGY children.
+
 ## Updating from upstream
 
 1. Fetch `upstream/main`.
