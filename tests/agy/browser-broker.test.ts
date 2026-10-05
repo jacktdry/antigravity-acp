@@ -158,6 +158,10 @@ describe("private child HOME", () => {
 	beforeEach(() => {
 		root = fs.mkdtempSync(path.join(os.tmpdir(), "broker-source-"));
 		spyOn(os, "homedir").mockReturnValue(root);
+		if (process.platform === "darwin")
+			fs.mkdirSync(path.join(root, "Library", "Keychains"), {
+				recursive: true,
+			});
 		fs.mkdirSync(path.join(root, ".gemini/config"), { recursive: true });
 		fs.mkdirSync(path.join(root, ".gemini/antigravity-cli/conversations"), {
 			recursive: true,
@@ -248,6 +252,13 @@ describe("private child HOME", () => {
 		expect(env.AGENTDOCK_BROWSER_BROKER_TOKEN).toBe(binding.token);
 		expect(env.USERPROFILE).toBe(env.HOME);
 		expect(env.XDG_CONFIG_HOME).toStartWith(env.HOME!);
+		if (process.platform === "darwin") {
+			const keychains = path.join(env.HOME!, "Library", "Keychains");
+			expect(fs.lstatSync(keychains).isSymbolicLink()).toBe(true);
+			expect(fs.realpathSync(keychains)).toBe(
+				fs.realpathSync(path.join(root, "Library", "Keychains")),
+			);
+		}
 		expect(
 			prepareAgyBrokerEnvironment("../unsafe", combinedBinding)?.HOME,
 		).toBe(env.HOME);
@@ -255,6 +266,8 @@ describe("private child HOME", () => {
 		expect(other.HOME).not.toBe(env.HOME);
 		cleanupAgyBrokerHome("../unsafe");
 		expect(fs.existsSync(env.HOME!)).toBe(false);
+		if (process.platform === "darwin")
+			expect(fs.existsSync(path.join(root, "Library", "Keychains"))).toBe(true);
 		expect(fs.existsSync(other.HOME!)).toBe(true);
 		expect(snapshot()).toEqual(before);
 	});

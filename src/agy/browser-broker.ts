@@ -235,6 +235,19 @@ function prepareChildEnvironment(
 		sandboxHome = fs.mkdtempSync(path.join(os.tmpdir(), "agy-acp-browser-"));
 		sandboxHomes.set(sessionId, sandboxHome);
 	}
+	// macOS agy resolves OAuth through the user's login Keychain, and that
+	// lookup follows HOME. Keep .gemini/config isolated, but expose the real
+	// Keychains directory at the path Security.framework expects inside the
+	// sandbox. Removing sandboxHome later removes only this symlink.
+	if (process.platform === "darwin") {
+		const sourceKeychains = path.join(os.homedir(), "Library", "Keychains");
+		const sandboxLibrary = path.join(sandboxHome, "Library");
+		const sandboxKeychains = path.join(sandboxLibrary, "Keychains");
+		if (fs.existsSync(sourceKeychains) && !fs.existsSync(sandboxKeychains)) {
+			fs.mkdirSync(sandboxLibrary, { recursive: true, mode: 0o700 });
+			fs.symlinkSync(sourceKeychains, sandboxKeychains, "dir");
+		}
+	}
 	const sandboxGemini = path.join(sandboxHome, ".gemini");
 	const sandboxConfig = path.join(sandboxGemini, "config");
 	fs.mkdirSync(sandboxConfig, { recursive: true, mode: 0o700 });

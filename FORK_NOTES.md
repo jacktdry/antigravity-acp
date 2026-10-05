@@ -38,19 +38,28 @@ pointing at the authenticated, up-to-date system `agy` executable.
 The ACP profile should pass those values with AgentDock's per-profile
 `env_from_env` mapping rather than adding a second AGY execution path.
 
-### macOS Keychain prerequisite
+### macOS Keychain compatibility
 
-The official AGY CLI uses the operating system secure keyring for OAuth tokens.
-On macOS this means the `Antigravity CLI` item in Apple Keychain. If that
-item's Access Control does not authorize the configured `AGY_BIN` (for the
-current AgentDock setup, `/Users/wei/.local/bin/agy`), every short-lived AGY
-child can trigger another Keychain authorization prompt.
+The official AGY CLI keeps its active OAuth credential in the macOS login
+Keychain (the `Antigravity Safe Storage` / `Antigravity Key` generic-password
+item). A fully relocated `HOME` therefore breaks credential lookup even when
+OAuth metadata files are copied into the sandbox: Security.framework treats the
+sandbox as having an unconfigured default keychain and can invoke
+`loginKC:queryCreate`, producing repeated authorization dialogs.
 
-This is not an ACP lifecycle leak and must not be worked around by modifying
-login-keychain ACLs, trust, or passwords from AgentDock. The user should grant
-the Google-signed `agy` binary access explicitly in Keychain Access. Until
-that prerequisite is satisfied, do not run prompt-count stress tests that
-would intentionally spawn many AGY children.
+AgentDock must keep the private `.gemini` sandbox, but on macOS it also
+symlinks the real `~/Library/Keychains` directory into
+`<isolated-home>/Library/Keychains`. This preserves the user's existing login
+Keychain identity without exposing the user's interactive `.gemini/config`,
+MCP routes, plugins, hooks, or sidecars.
+
+Cleanup must remove only the sandbox and the Keychains symlink; it must never
+traverse into or delete the real Keychains directory. Tests cover this invariant.
+
+Do not mutate login-keychain ACLs, trust settings, or passwords from AgentDock
+as a workaround. If an independently installed `agy` still needs a Keychain
+ACL adjustment, that remains an explicit user action rather than adapter
+automation.
 
 ## Updating from upstream
 
