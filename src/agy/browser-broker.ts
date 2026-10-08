@@ -31,6 +31,26 @@ function browserBackendsDisabled(): boolean {
 	return process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED === "1";
 }
 
+/** Bun follows HOME overrides; use the macOS account record for Keychain paths. */
+function macOSAccountHome(): string | null {
+	if (process.platform !== "darwin") return null;
+	const account = Bun.spawnSync(["/usr/bin/id", "-P"], {
+		stdout: "pipe",
+		stderr: "ignore",
+	});
+	const home =
+		account.exitCode === 0
+			? new TextDecoder().decode(account.stdout).trim().split(":")[8]
+			: undefined;
+	return home && path.isAbsolute(home) ? home : null;
+}
+
+/** Stable AgentDock can override HOME without advertising Broker env flags. */
+function hasRedirectedMacOSHome(): boolean {
+	const home = macOSAccountHome();
+	return home !== null && path.resolve(os.homedir()) !== path.resolve(home);
+}
+
 function parseNamedBinding(
 	mcpServers: unknown[],
 	serverName: string,
@@ -198,7 +218,9 @@ export function prepareAgyBrokerEnvironment(
 	if (!binding) {
 		if (brokerRequired())
 			throw new Error("AgentDock Browser Broker MCP is required");
-		if (browserBackendsDisabled())
+		// Older/stable AgentDock profiles set an isolated HOME but provide neither
+		// Broker flag. Never let their AGY child inherit a HOME with no login Keychain.
+		if (browserBackendsDisabled() || hasRedirectedMacOSHome())
 			return prepareChildEnvironment(sessionId, null);
 		return undefined;
 	}
@@ -240,21 +262,10 @@ function prepareChildEnvironment(
 	// follows that override. Query the OS password record (not HOME) instead.
 	// Keep .gemini/config isolated and remove only this link during cleanup.
 	if (process.platform === "darwin") {
-		const account = Bun.spawnSync(["/usr/bin/id", "-P"], {
-			stdout: "pipe",
-			stderr: "ignore",
-		});
-		const accountHome =
-			account.exitCode === 0
-				? new TextDecoder()
-						.decode(account.stdout)
-						.trim()
-						.split(":")[8]
-				: undefined;
-		const sourceKeychains =
-			accountHome && path.isAbsolute(accountHome)
-				? path.join(accountHome, "Library", "Keychains")
-				: null;
+		const accountHome = macOSAccountHome();
+		const sourceKeychains = accountHome
+			? path.join(accountHome, "Library", "Keychains")
+			: null;
 		const sandboxLibrary = path.join(sandboxHome, "Library");
 		const sandboxKeychains = path.join(sandboxLibrary, "Keychains");
 		if (

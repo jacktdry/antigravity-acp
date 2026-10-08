@@ -159,19 +159,31 @@ describe("private child HOME", () => {
 		root = fs.mkdtempSync(path.join(os.tmpdir(), "broker-source-"));
 		spyOn(os, "homedir").mockReturnValue(root);
 		const originalSpawnSync = Bun.spawnSync;
-		spyOn(Bun, "spawnSync").mockImplementation(
-			((cmd: string[], options?: unknown) => {
-				if (cmd[0] !== "/usr/bin/id" || cmd[1] !== "-P")
-					return (originalSpawnSync as any)(cmd, options);
-				return {
-					exitCode: 0,
-					stdout: Buffer.from(
-						["test", "*", "501", "20", "0", "0", "Test", "0", root, "/bin/zsh"].join(":"),
-					),
-					stderr: Buffer.alloc(0),
-				};
-			}) as typeof Bun.spawnSync,
-		);
+		spyOn(Bun, "spawnSync").mockImplementation(((
+			cmd: string[],
+			options?: unknown,
+		) => {
+			if (cmd[0] !== "/usr/bin/id" || cmd[1] !== "-P")
+				return (originalSpawnSync as any)(cmd, options);
+			return {
+				exitCode: 0,
+				stdout: Buffer.from(
+					[
+						"test",
+						"*",
+						"501",
+						"20",
+						"0",
+						"0",
+						"Test",
+						"0",
+						root,
+						"/bin/zsh",
+					].join(":"),
+				),
+				stderr: Buffer.alloc(0),
+			};
+		}) as typeof Bun.spawnSync);
 		if (process.platform === "darwin")
 			fs.mkdirSync(path.join(root, "Library", "Keychains"), {
 				recursive: true,
@@ -211,6 +223,42 @@ describe("private child HOME", () => {
 		cleanupAgyBrokerHome("second");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
+	test("legacy AgentDock with redirected HOME and no Broker flags still isolates Keychain", () => {
+		if (process.platform !== "darwin") return;
+		const previousRequired = process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED;
+		const previousDisabled = process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED;
+		const redirectedHome = fs.mkdtempSync(
+			path.join(os.tmpdir(), "broker-outer-"),
+		);
+		delete process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED;
+		delete process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED;
+		try {
+			spyOn(os, "homedir").mockReturnValue(redirectedHome);
+			const env = prepareAgyBrokerEnvironment("second", null);
+			if (!env?.HOME) throw new Error("expected a private AGY child HOME");
+			expect(env.HOME).not.toBe(redirectedHome);
+			expect(fs.realpathSync(path.join(env.HOME, "Library", "Keychains"))).toBe(
+				fs.realpathSync(path.join(root, "Library", "Keychains")),
+			);
+			const mcp = JSON.parse(
+				fs.readFileSync(
+					path.join(env.HOME, ".gemini/config/mcp_config.json"),
+					"utf8",
+				),
+			);
+			expect(mcp.mcpServers).toEqual({});
+		} finally {
+			cleanupAgyBrokerHome("second");
+			fs.rmSync(redirectedHome, { recursive: true, force: true });
+			if (previousRequired === undefined)
+				delete process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED;
+			else process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED = previousRequired;
+			if (previousDisabled === undefined)
+				delete process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED;
+			else process.env.AGENTDOCK_BROWSER_BACKENDS_DISABLED = previousDisabled;
+		}
+	});
+
 	test("login Keychains lookup ignores the outer ACP profile HOME", () => {
 		if (process.platform !== "darwin") return;
 		const parentHome = fs.mkdtempSync(path.join(os.tmpdir(), "broker-parent-"));
@@ -222,9 +270,9 @@ describe("private child HOME", () => {
 			expect(fs.realpathSync(keychains)).toBe(
 				fs.realpathSync(path.join(root, "Library", "Keychains")),
 			);
-			expect(
-				fs.existsSync(path.join(parentHome, "Library", "Keychains")),
-			).toBe(false);
+			expect(fs.existsSync(path.join(parentHome, "Library", "Keychains"))).toBe(
+				false,
+			);
 		} finally {
 			fs.rmSync(parentHome, { recursive: true, force: true });
 		}

@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0-agentdock.8] - 2026-10-08
+
+### Fixed
+- **Stable AgentDock Keychain popup despite v.7**: The legacy no-Broker-flags prompt path inherited AgentDock's redirected parent HOME, which still had no default login Keychain. On macOS, redirected parent HOME now forces the existing per-session AGY child isolation with the real login Keychains symlink. Ordinary ACP clients using their normal macOS HOME retain the previous optional-Broker behavior. Added a regression test for missing flags and the overridden HOME.
+
 ## [1.2.0-agentdock.7] - 2026-10-08
 
 ### Fixed

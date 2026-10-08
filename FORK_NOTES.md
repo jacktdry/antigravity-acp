@@ -56,6 +56,14 @@ account's passwd record (`/usr/bin/id -P`), **not** `os.homedir()` or
 identity without exposing the user's interactive `.gemini/config`,
 MCP routes, plugins, hooks, or sidecars.
 
+Stable AgentDock profiles may set only `AGY_BIN` and an overridden `HOME`,
+without the newer `AGENTDOCK_BROWSER_BROKER_REQUIRED` or
+`AGENTDOCK_BROWSER_BACKENDS_DISABLED` flags. In that legacy no-Broker case the
+adapter must *still* create the per-session Keychain-compatible child sandbox
+rather than inherit the broken parent HOME. Normal-HOME generic ACP clients
+retain optional Broker behavior. This was confirmed by a live
+`loginKC:queryCreate` popup on 2026-10-08 and fixed in `1.2.0-agentdock.8`.
+
 Cleanup must remove only the sandbox and the Keychains symlink; it must never
 traverse into or delete the real Keychains directory. Tests cover this invariant.
 
