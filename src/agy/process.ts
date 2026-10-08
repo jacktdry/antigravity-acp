@@ -9,6 +9,11 @@ import {
 	prepareAgyBrokerEnvironment,
 	prepareAgyModelEnvironment,
 } from "./browser-broker";
+import {
+	assertNativeExtraArgsAllowed,
+	nativePermissionPolicy,
+	NativePermissionError,
+} from "./native-permission-policy";
 
 // Linux MAX_ARG_STRLEN is 128KB; stay well below it to prevent E2BIG errors.
 export const MAX_PROMPT_ARG_LENGTH = 64 * 1024;
@@ -87,16 +92,18 @@ export interface AgyArgsOptions {
 }
 
 export function autoApproveDisabled(): boolean {
-	const value = process.env.AGY_ACP_AUTO_APPROVE;
-	if (value !== undefined && value !== "0")
-		throw new Error("Invalid AGY_ACP_AUTO_APPROVE");
-	return value === "0";
+	return nativePermissionPolicy().mode === "blocked";
 }
 
-/** No external native-tool approval transport exists in this adapter. */
-export function assertHeadlessApprovalSupported(): void {
-	if (autoApproveDisabled())
-		throw new Error(
+/** Official hooks exist, but this adapter has no verified runtime bridge. */
+export function assertHeadlessApprovalSupported(
+	env?: Record<string, string>,
+): void {
+	const parent = nativePermissionPolicy();
+	const child = nativePermissionPolicy(env?.AGY_ACP_AUTO_APPROVE);
+	if (parent.mode === "blocked" || child.mode === "blocked")
+		throw new NativePermissionError(
+			"AGY_NATIVE_APPROVAL_UNAVAILABLE",
 			"AGY_ACP_AUTO_APPROVE=0: headless native-tool approval is unavailable; AGY prompt launch refused",
 		);
 }
@@ -106,8 +113,7 @@ export function buildAgyArgs(opts: AgyArgsOptions): string[] {
 	const restricted = autoApproveDisabled();
 	// Reject ALL extra tokens: no aliases, equals forms, config loaders or
 	// future upstream options can override the opt-in policy.
-	if (restricted && opts.extraArgs?.length)
-		throw new Error("AGY_EXTRA_ARGS is forbidden with AGY_ACP_AUTO_APPROVE=0");
+	assertNativeExtraArgsAllowed(opts.extraArgs ?? []);
 	const args = ["--add-dir", opts.workingDir];
 	for (const dir of opts.additionalDirs ?? []) {
 		args.push("--add-dir", dir);
@@ -138,7 +144,7 @@ export function spawnAgy(
 	cwd: string,
 	env?: Record<string, string>,
 ): Bun.Subprocess<"ignore", "ignore", "pipe"> {
-	assertHeadlessApprovalSupported();
+	assertHeadlessApprovalSupported(env);
 	return Bun.spawn([binary, ...args], {
 		cwd,
 		stdin: "ignore",
@@ -151,9 +157,9 @@ export function spawnAgy(
 /** Read $AGY_EXTRA_ARGS into a token list. */
 export function extraArgsFromEnv(): string[] {
 	const raw = process.env.AGY_EXTRA_ARGS;
-	if (autoApproveDisabled() && raw?.trim())
-		throw new Error("AGY_EXTRA_ARGS is forbidden with AGY_ACP_AUTO_APPROVE=0");
-	return raw ? raw.split(/\s+/).filter((s) => s.length > 0) : [];
+	const tokens = raw ? raw.split(/\s+/).filter((s) => s.length > 0) : [];
+	assertNativeExtraArgsAllowed(tokens);
+	return tokens;
 }
 
 /** Execute a non-interactive agy command (print mode `-p`) and capture stdout. */

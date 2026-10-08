@@ -95,7 +95,7 @@ describe("disabled auto approval", () => {
 			);
 		}
 	});
-	test("no headless approval hook: all prompt entry points refuse before spawn", async () => {
+	test("no verified runtime approval bridge: all prompt entry points refuse before spawn", async () => {
 		process.env.AGY_ACP_AUTO_APPROVE = "0";
 		process.env.AGY_EXTRA_ARGS = "--dangerously-skip-permissions=canary-secret";
 		const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
