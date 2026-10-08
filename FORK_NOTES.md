@@ -49,8 +49,11 @@ sandbox as having an unconfigured default keychain and can invoke
 
 AgentDock must keep the private `.gemini` sandbox, but on macOS it also
 symlinks the real `~/Library/Keychains` directory into
-`<isolated-home>/Library/Keychains`. This preserves the user's existing login
-Keychain identity without exposing the user's interactive `.gemini/config`,
+`<isolated-home>/Library/Keychains`. The source must come from the macOS
+account's passwd record (`/usr/bin/id -P`), **not** `os.homedir()` or
+`os.userInfo().homedir`: the Bun runtime returns the overridden ACP-profile
+`HOME` for both APIs. This preserves the user's existing login Keychain
+identity without exposing the user's interactive `.gemini/config`,
 MCP routes, plugins, hooks, or sidecars.
 
 Cleanup must remove only the sandbox and the Keychains symlink; it must never

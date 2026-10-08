@@ -158,6 +158,20 @@ describe("private child HOME", () => {
 	beforeEach(() => {
 		root = fs.mkdtempSync(path.join(os.tmpdir(), "broker-source-"));
 		spyOn(os, "homedir").mockReturnValue(root);
+		const originalSpawnSync = Bun.spawnSync;
+		spyOn(Bun, "spawnSync").mockImplementation(
+			((cmd: string[], options?: unknown) => {
+				if (cmd[0] !== "/usr/bin/id" || cmd[1] !== "-P")
+					return (originalSpawnSync as any)(cmd, options);
+				return {
+					exitCode: 0,
+					stdout: Buffer.from(
+						["test", "*", "501", "20", "0", "0", "Test", "0", root, "/bin/zsh"].join(":"),
+					),
+					stderr: Buffer.alloc(0),
+				};
+			}) as typeof Bun.spawnSync,
+		);
 		if (process.platform === "darwin")
 			fs.mkdirSync(path.join(root, "Library", "Keychains"), {
 				recursive: true,
@@ -196,6 +210,24 @@ describe("private child HOME", () => {
 		cleanupAgyBrokerHome("../unsafe");
 		cleanupAgyBrokerHome("second");
 		fs.rmSync(root, { recursive: true, force: true });
+	});
+	test("login Keychains lookup ignores the outer ACP profile HOME", () => {
+		if (process.platform !== "darwin") return;
+		const parentHome = fs.mkdtempSync(path.join(os.tmpdir(), "broker-parent-"));
+		try {
+			spyOn(os, "homedir").mockReturnValue(parentHome);
+			const env = prepareAgyBrokerEnvironment("second", combinedBinding)!;
+			const keychains = path.join(env.HOME!, "Library", "Keychains");
+			expect(fs.lstatSync(keychains).isSymbolicLink()).toBe(true);
+			expect(fs.realpathSync(keychains)).toBe(
+				fs.realpathSync(path.join(root, "Library", "Keychains")),
+			);
+			expect(
+				fs.existsSync(path.join(parentHome, "Library", "Keychains")),
+			).toBe(false);
+		} finally {
+			fs.rmSync(parentHome, { recursive: true, force: true });
+		}
 	});
 	test("copies auth, shares conversations, excludes global routes and preserves source bytes", () => {
 		const snapshot = () =>

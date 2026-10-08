@@ -235,15 +235,33 @@ function prepareChildEnvironment(
 		sandboxHome = fs.mkdtempSync(path.join(os.tmpdir(), "agy-acp-browser-"));
 		sandboxHomes.set(sessionId, sandboxHome);
 	}
-	// macOS agy resolves OAuth through the user's login Keychain, and that
-	// lookup follows HOME. Keep .gemini/config isolated, but expose the real
-	// Keychains directory at the path Security.framework expects inside the
-	// sandbox. Removing sandboxHome later removes only this symlink.
+	// macOS agy resolves OAuth through the login Keychain. AgentDock overrides
+	// HOME for the outer ACP profile, and Bun's os.userInfo().homedir also
+	// follows that override. Query the OS password record (not HOME) instead.
+	// Keep .gemini/config isolated and remove only this link during cleanup.
 	if (process.platform === "darwin") {
-		const sourceKeychains = path.join(os.homedir(), "Library", "Keychains");
+		const account = Bun.spawnSync(["/usr/bin/id", "-P"], {
+			stdout: "pipe",
+			stderr: "ignore",
+		});
+		const accountHome =
+			account.exitCode === 0
+				? new TextDecoder()
+						.decode(account.stdout)
+						.trim()
+						.split(":")[8]
+				: undefined;
+		const sourceKeychains =
+			accountHome && path.isAbsolute(accountHome)
+				? path.join(accountHome, "Library", "Keychains")
+				: null;
 		const sandboxLibrary = path.join(sandboxHome, "Library");
 		const sandboxKeychains = path.join(sandboxLibrary, "Keychains");
-		if (fs.existsSync(sourceKeychains) && !fs.existsSync(sandboxKeychains)) {
+		if (
+			sourceKeychains &&
+			fs.existsSync(sourceKeychains) &&
+			!fs.existsSync(sandboxKeychains)
+		) {
 			fs.mkdirSync(sandboxLibrary, { recursive: true, mode: 0o700 });
 			fs.symlinkSync(sourceKeychains, sandboxKeychains, "dir");
 		}

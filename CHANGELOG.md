@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0-agentdock.7] - 2026-10-08
+
+### Fixed
+- **macOS login Keychain with isolated ACP HOME**: Resolve the actual account home through macOS `/usr/bin/id -P` instead of Bun's `os.homedir()` / `os.userInfo().homedir`, which both follow the overridden HOME. Child sandboxes can now access the existing login Keychain without inheriting global `.gemini` plugins or MCP configuration. Added regression and live sandbox verification.
+
 ## [1.2.0-agentdock.5] - 2026-10-04
 
 ### Added
