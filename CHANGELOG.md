@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.0-agentdock.13] - Unreleased candidate
+
+- Add an opt-in-ready, **inactive** shared text suppression cursor in the
+  existing SQLite Translator/StreamPoller for future verified external delivery.
+  A bound, open SQLite DB must provide one terminal, exact-matching agent-text
+  row with all earlier steps already translated before reserving a send.
+- External send reservation blocks concurrent DB emission; only ACK after a
+  successful client update marks the row delivered, suppressing duplicate
+  SQLite chunks without losing later tool updates. Uncertain delivery or a
+  post-commit SQLite rewrite fails closed instead of replaying text blindly.
+- 10 synthetic/SQLite handoff integration tests added, with full suite 440
+  passing across 42 files. The public ACP runtime/Adapter is unchanged:
+  no direct mode is available; existing default and shadow still use SQLite.
+- Candidate is source-only, not pushed/deployed; no real AGY OAuth prompts.
+
 ## [1.2.0-agentdock.12] - Unreleased candidate
 
 - Add a standalone, non-executing `StreamDirectLedger` prototype for DB-verified
