@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0-agentdock.12] - Unreleased candidate
+
+- Add a standalone, non-executing `StreamDirectLedger` prototype for DB-verified
+  ACP text admission: strict conversation/step identity, terminal SQLite row
+  equality, 1 MiB/128-step limits, per-step reservation and acknowledgement.
+- Never automatically retry an ambiguously delivered chunk; detect cancelled
+  sends, post-commit SQLite rewrites, unexpected tools and mismatches.
+- Add 14 synthetic tests and a promotion/rollback contract in
+  `docs/research/stream-direct-admission.md`. Full ACP suite: 430 pass,
+  0 fail. **Not connected to Adapter**: no direct ACP streaming is enabled.
+- Legacy/default `AGY_ACP_STREAM_JSON=disabled` and opt-in `shadow`
+  are unchanged. No AGY login/prompt probes or AgentDock deployments.
+
 ## [1.2.0-agentdock.11] - Unreleased candidate
 
 - Add an isolated, opt-in native PreToolUse Hook **subprocess fixture**:

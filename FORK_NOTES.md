@@ -85,12 +85,12 @@ automation.
 
 Do not put AgentDock-specific changes directly on `main`.
 
-## Next integration opt-ins (candidate 1.2.0-agentdock.11)
+## Next integration opt-ins (candidate 1.2.0-agentdock.12)
 
 Source: `feature/next-integration-optin`, based on `4fd494b`. These changes
 belong only to the ACP adapter. Stable and Next AgentDock Core/UI/config and
 installed adapters are outside this branch. The feature-branch package version
-is `1.2.0-agentdock.11`; this is an unreleased candidate pending review.
+is `1.2.0-agentdock.12`; this is an unreleased candidate pending review.
 
 | Environment | Unset / Legacy | Explicit opt-in |
 | --- | --- | --- |
