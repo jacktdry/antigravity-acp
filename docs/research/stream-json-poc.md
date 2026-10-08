@@ -1,81 +1,115 @@
-# Stream-json PoC design and validation matrix
+# Stream-json parser PoC and validation matrix
 
-Status: **design only**. No stream-json parser, real AGY capture or production
-integration is delivered by this candidate. AGY upstream 1.3.1 is the intended
-validation target supplied by the task, not a locally reverified event schema.
-Current production prompts remain one child per turn with stdout ignored and
-SQLite `StreamPoller` streaming; replay, cancellation and images stay intact.
+Status (2026-10-08): **standalone offline parser implemented**. This is not
+production stream-json integration. Only `src/agy/stream-json-poc.ts`, its
+synthetic tests, and this document change. Production stdout handling, SQLite
+StreamPoller, replay, images, cancellation and native permission remain unchanged.
 
-## Proposed bounded PoC
+## Provenance and live evidence
 
-Add `src/agy/stream-json-poc.ts` as a standalone module with no import from
-`Adapter`, `Agent`, `index.ts` or `StreamPoller`. Its input is bytes and its output
-is typed experimental events; it must not spawn AGY, write session state, request
-approvals, run tools or emit ACP updates. Fixture input must contain synthetic
-text, conversation ids and tool names, with no tokens or real prompt contents.
+Schema source: [official headless streaming JSON documentation](https://www.agy.dev/docs/cli/headless/#streaming-json),
+read on 2026-10-08; the orchestrator identifies this as the AGY 1.3.1 schema.
+The page itself is not a version-pinned schema artifact. Source fields are
+`event`, `init`, `step_update`, `result`, `conversation_id`, `step_index`,
+`state`, and cumulative `num_turns`. No invented `type` or `step` envelope is used.
+The following short fixtures use synthetic values in those official shapes:
 
-Before implementation, capture the actual 1.3.1 format using an independently
-approved, harmless isolated text-only prompt after inspecting its CLI help/source.
-Do not infer upstream field names from this design. In particular, determine
-whether `init`, `step`, `result`, error and partial tool arguments are actual event
-types, and whether stdout is NDJSON, structured messages or mixed diagnostics.
-Maintain the captured schema provenance (CLI version/hash and capture command).
-If there is no stable framing/event identity, the PoC remains unsupported.
+```json
+{"event":"init","conversation_id":"fixture","init":{"cwd":"/synthetic","tools":[],"permission_mode":"request-review"}}
+{"event":"step_update","step_update":{"conversation_id":"fixture","step_index":0,"state":"DONE","step_type":"agent_response","text_delta":"synthetic"}}
+{"event":"result","result":{"conversation_id":"fixture","status":"SUCCESS","response":"synthetic","num_turns":1,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}}
+```
 
-For a confirmed NDJSON format, propose a 1 MiB **byte** limit per event, including
-an unterminated line, and a bounded event queue (32) with backpressure. Do not
-buffer an entire stdout stream. Split lines from bytes before strict UTF-8 decode;
-retain only the unfinished line. Handle LF/CRLF and multibyte characters split
-across chunks. Enforce the size limit before JSON parsing; reject invalid UTF-8,
-JSON, scalar/array envelopes or missing required fields with fixed error codes.
-Never include a raw line, tool arguments or parser exception excerpt in errors.
-Define final unterminated valid JSON acceptance explicitly in fixture tests.
+Read-only local inspection: `agy --help` exited 0 and advertised stream-json
+input/output flags. Inspected binary `/Users/wei/.local/bin/agy`, SHA-256
+`88db8b4d21ece4999fa58e0b54cea77154e47b319ee178d086c446262317f3fa`.
+No prompt, auth operation, installation, service restart or runtime integration
+was performed by this worker. Help/hash do not independently establish version.
 
-Use a terminal parser state: after framing/schema/size failure, release the
-buffer and refuse further input. Explicit errors should become bounded typed
-error events, not arbitrary thrown text. Unknown event types must stop the PoC
-with an unsupported-schema error until intentionally supported. Init/step/result
-ordering must be validated; require one init and one terminal result, forbid
-steps after terminal, and distinguish clean EOF from missing-result EOF.
-Do not equate a terminal result with successful process exit or persistence.
+Orchestrator-supplied restricted OAuth probe evidence: **only an ERROR result
+was observed**. No live SUCCESS was observed or established. The worker has no
+sanitized capture, exact probe command or trace to independently reproduce it;
+this observation is not parser/live compatibility acceptance. Any additional
+OAuth prompt requires reporting to the orchestrator first; no Keychain window
+may be triggered autonomously.
 
-## Validation matrix (all pending)
+## Bounded API and state contract
 
-| Area | Fixture / check | Expected evidence |
+`StreamJsonPocParser.write(Uint8Array)` returns `{consumed, backpressure}`.
+Caller retains and retries `chunk.subarray(consumed)` after `read()` drains
+queue space. At 32 events, write consumes zero additional bytes. Parser never
+retains caller chunks, owns at most one 1 MiB line allocation, and queues at most
+32 decoded events. Each event is capped at 1 MiB of bytes before LF, including
+CR and incomplete lines. This is a bound on input and event count, not a claim
+of a 33 MiB JavaScript heap cap: strings, object overhead, decoder and JSON
+scratch space add memory. No whole-stream accumulator or unbounded identity map.
+
+LF/CRLF and arbitrary byte boundaries are supported. Strict UTF-8 decode follows
+byte framing. BOM and blank lines fail; valid final JSON without LF is accepted.
+`finish()` must only follow consumption of all caller bytes; callers must drain
+and retry if it returns false. Result is a turn boundary, not process exit:
+`initial -> steps -> result -> steps -> result`, with one init per parser.
+Conversation identity stays fixed. EOF without a last result fails, including
+EOF during a second turn. No process status, stderr or persistence is inferred.
+
+Step indices may have gaps. Repeated ACTIVE updates are preserved as deltas
+(even identical text); ACTIVE -> DONE is valid. This bounded PoC conservatively
+requires nondecreasing indices, matching step category for same-index updates,
+and no update after that index is DONE. Result `num_turns` must increase; a
+first result may use 0 for an error. Repeated init/result and stale conversations
+fail. These ordering restrictions cover documented examples, not proof that all
+upstream tool/subagent interleavings are supported. Pre-init failure envelopes
+and empty conversation IDs fail closed; their real behavior remains a capture
+question rather than an invented lifecycle.
+
+Envelope/known fields are checked for object/string/array/number types and
+known categories/statuses; token counts and indices are nonnegative safe
+integers. Unknown events or extra top-level/payload fields fail closed. Optional
+duration, usage, model, agent, structured output and schema fields are checked.
+Nested `tool_info`, `subagent_info`, `structured_output` and `json_schema` remain
+opaque JSON objects, without nested semantic validation or authority. Partial
+tool parameters and output are inert data. Image events are unsupported.
+JSON syntax follows JSON.parse (including last-key-wins for duplicate keys).
+
+Parser failures expose only fixed codes: `EVENT_TOO_LARGE`, `INVALID_UTF8`,
+`INVALID_JSON`, `INVALID_SCHEMA`, `UNSUPPORTED_SCHEMA`, `INVALID_ORDER`,
+`IDENTITY_MISMATCH`, `INCOMPLETE_TRACE`, `CANCELLED`. No raw input or native parser
+exception is returned or logged. Native result error text is replaced with
+`UPSTREAM_ERROR`; result status remains data, including ERROR/cancellation.
+All payload data remains untrusted, including text, paths, tool arguments and
+nested tool errors; callers must never treat event payloads as safe diagnostics.
+Failure/cancel releases line/queue and refuses further input. EOF is idempotent.
+The module has no imports and cannot spawn tools, store credentials, request
+approvals or emit ACP updates. It has no Adapter, Agent or SQLite dependency.
+
+## Security validation matrix
+
+| Area | Synthetic evidence | Remaining gate |
 | --- | --- | --- |
-| Schema | Version-pinned synthetic init/step/result trace | Correct typed events and identifiers; actual 1.3.1 schema provenance |
-| Byte chunks | Split every byte boundary, including UTF-8 and CRLF | Identical output for all partitions |
-| Coalescing | Multiple complete events and partial tail in one chunk | Ordered events, bounded retained tail |
-| Limits | Exactly 1 MiB, one byte above, huge unterminated input | Deterministic acceptance/rejection before parse; buffer released |
-| Encoding | Invalid UTF-8, BOM policy, empty lines | Explicit contract; no silent substitution |
-| Invalid JSON | Truncation, malformed JSON, scalar, array | Fixed redacted error; no recovery into next event |
-| Ordering | Duplicate init/result, step before init/after result | Explicit protocol failure |
-| EOF | Valid no-newline tail, incomplete JSON, no result | Documented final-tail policy; incomplete trace remains failure |
-| Native errors | Error event, stderr-only exit, nonzero exit after result | Parser and process failures kept distinct |
-| Tools | Partial arguments, tool start/end, repeated ids | No execution/approval; safe experimental representation |
-| Security | Token/prompt canaries in malformed or error events | No canary in logs/errors; raw fixture input never logged |
-| Replay | SQLite vs captured event identity/ordering | Duplicate suppression/resume semantics proven separately |
-| Images | Text plus image references/payload and large image | Size policy and ACP fidelity decided before adoption |
-| Cancel | SIGINT/kill between event fragments, delayed DB flush | Existing exact-child lifecycle retained; no terminal fabrication |
-| Pressure | Slow consumer / long response / oversized burst | Queue bound, backpressure and bounded memory verified |
-| Isolation | Two sessions, restarted child and stale events | No cross-session updates; owner/incarnation fenced |
+| Schema | Official envelopes, optional duration/usage, typed/missing/unknown fields | Version-pinned successful live trace |
+| Byte chunks | Every two-chunk byte boundary; one-byte partitions with UTF-8/CRLF | Real transport capture |
+| Coalescing | Multiple events plus incomplete tail | None for offline contract |
+| Limits | Exact 1 MiB LF/CRLF/tail; +1 byte; 5 MiB burst; accumulated incomplete bytes; multibyte limits | Heap/RSS measurement |
+| Encoding | Invalid, overlong, surrogate, out-of-range and truncated UTF-8; BOM; blank lines | None for offline contract |
+| JSON | Malformed/truncated/scalar/array; terminal fail and no recovery | None for offline contract |
+| Ordering | Duplicate init/result/DONE, reversed indices, repeated ACTIVE, index gaps, two turns | Tool/subagent interleaving parity |
+| EOF | No-newline final JSON, missing-result/second-turn EOF, idempotence | Actual child exit/DB flush |
+| Native errors | All documented result statuses; native error redaction | ERROR-only probe reported; stderr-only/nonzero after result not tested live |
+| Tools | ACTIVE/DONE, partial opaque parameters, repeated tool names, inert output | Real invocation identity and nested schema |
+| Security | Malformed token/prompt canaries; native error canaries; no imports/authority dependencies | No live secret trace captured |
+| Replay | No SQLite coupling or updates | Offline SQLite identity/replay comparison not implemented |
+| Images | Unknown image format fails closed; size cap remains enforced | Image references/payload and ACP fidelity unverified |
+| Cancel | Fragment cancel discards queue/tail and fabricates no result | SIGINT/kill and delayed flush unverified |
+| Pressure | 1502-event burst with consumer draining one event; 32 cap and caller retry | Live long response and heap/RSS unverified |
+| Isolation | Independent parsers, fixed conversation identity, stale/restarted event rejection | Owner/incarnation runtime fencing unverified |
 
-## Precise next steps and production gate
+## Verification and adoption gate
 
-1. Verify 1.3.1 CLI framing/schema in an isolated nonproduction capture; record
-   sanitized provenance. Keep live Stable/Next executables and sessions untouched.
-2. Implement only the standalone parser and synthetic fixture tests above.
-   Validate byte/memory bounds and error redaction before process integration.
-3. Build a separate offline comparison harness for stream events vs sanitized
-   SQLite rows (including replay, cancel and images); publish mismatches.
-4. Resolve conversation identity, persisted step index, duplicate suppression,
-   EOF/nonzero exits, buffering, partial tool events and native approval transport
-   as independent contracts. Stream output alone supplies no approval authority.
-5. Request a separate production-integration scope only after the matrix passes.
-   Preserve a tested SQLite path and an explicit rollback decision; do not enable
-   long-lived children or switch ACP prompts merely because parsing works.
+Validation results are recorded below after final checks. All tests use
+synthetic fixtures; no successful real OAuth stream or native UAT is claimed.
 
-This document is the PoC deliverable for the current bounded task. Every matrix
-row is pending, and no stream-json integration claim or native permission claim
-is made. The decision preserves SQLite as the source of truth for existing ACP
-replay/cancel/image behavior until parity is demonstrated.
+Future production work needs separately authorized successful captures, nested
+schema/ordering confirmation, SQLite replay/cancel/image parity, process exit
+handling, ownership fencing, native approval transport and rollback decisions.
+This PoC must not be imported into the official ACP prompt path. It neither
+enables persistent children nor replaces SQLite streaming.
