@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.0-agentdock.11] - Unreleased candidate
+
+- Add an isolated, opt-in native PreToolUse Hook **subprocess fixture**:
+  bounded stdin, trusted private HOME configuration, a mock Core subprocess
+  provider, correlated allow/deny decisions, timeout/cancel and fail-closed
+  responses. No real AGY prompt/Next M8 approval bridge is enabled;
+  `AGY_ACP_AUTO_APPROVE=0` still refuses all headless prompts.
+- Add `AGY_ACP_STREAM_JSON=shadow` for experimental single-turn
+  `--output-format stream-json` capture and SQLite step comparison.
+  Legacy default stays disabled; SQLite remains the sole source of ACP
+  messages/replay, and shadow parse mismatches cannot change a prompt result.
+- Add mock-spawn/cancel/fallback/replay tests for the shadow path and
+  subprocess/provider fixtures for the Hook policy; integrated suite
+  416 passed (2026-10-09), with no real AGY OAuth prompt used.
+- Both features are Next-only integration candidates. Not pushed or deployed
+  to either AgentDock installation.
+
 ## [1.2.0-agentdock.10] - Unreleased candidate
 
 - Add a standalone, bounded AGY stream-json NDJSON parser PoC with
