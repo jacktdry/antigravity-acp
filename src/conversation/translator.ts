@@ -138,6 +138,47 @@ export class Translator {
 		this.pendingExternalToken = null;
 	}
 
+	/**
+	 * Verify *every* previously acknowledged external delivery against a full
+	 * SQLite turn snapshot. Required because a removed row, duplicate idx or
+	 * reverted status cannot be detected by the incremental text handler alone.
+	 *
+	 * StreamPoller calls this before dispatching any updates. Unlike translate(),
+	 * this needs all rows for the current turn (not a filtered/incremental batch).
+	 */
+	assertExternalSnapshot(rows: readonly StepRow[]): void {
+		if (this.externalDeliveryFailed)
+			throw new Error("AGY_EXTERNAL_TEXT_DELIVERY_UNCERTAIN");
+		// Index the *acknowledged* steps only, so even a large SQLite turn
+		// snapshot is verified in O(rows + acknowledged) rather than O(N*M).
+		const acknowledged = new Map<number, { text: string; count: number }>();
+		for (const [idx, record] of this.externallyDelivered) {
+			if (record.state === "acked")
+				acknowledged.set(idx, { text: record.text, count: 0 });
+		}
+		if (acknowledged.size === 0) return;
+		for (const row of rows) {
+			const record = acknowledged.get(row.idx);
+			if (!record) continue;
+			record.count++;
+			if (
+				row.stepType !== 15 ||
+				row.status !== 3 ||
+				row.stepPayload.agentText?.text !== record.text ||
+				record.count !== 1
+			) {
+				this.externalDeliveryFailed = true;
+				throw new Error("AGY_EXTERNAL_TEXT_DIVERGENCE");
+			}
+		}
+		for (const record of acknowledged.values()) {
+			if (record.count !== 1) {
+				this.externalDeliveryFailed = true;
+				throw new Error("AGY_EXTERNAL_TEXT_DIVERGENCE");
+			}
+		}
+	}
+
 	/** Translate a batch of rows into ordered ACP updates, advancing state. */
 	translate(rows: StepRow[]): SessionUpdate[] {
 		if (this.externalDeliveryFailed)

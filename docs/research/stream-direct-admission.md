@@ -19,7 +19,7 @@ This contract establishes admission, **not a promise of low-latency direct strea
 Do not introduce `AGY_ACP_STREAM_JSON=direct` or feed this prototype into `Adapter.runPrompt` without first completing:
 
 1. User-authorized, disposable-profile AGY event/SQLite parity traces that **do not cause unexpected OAuth prompts**, including multi-step, tools, images, models and cancellations.
-2. A shared per-step suppression cursor in `Translator` / `StreamPoller` to prevent replaying directly sent text; verify tool updates remain in timestamp/index order.
+2. Integrate the now implemented shared suppression cursor into a Next-only Adapter path only after proving ordered tool/image/usage updates and safe remote-ACK handling.
 3. A defined failure policy for client.update ambiguity and DB post-commit mutation. Fail-closed or reset a disposable Next-only session; do not claim invisible automatic rollback.
 4. Benchmark first token, CPU, RSS, DB polling, retry and error paths against shadow/default.
 5. Next-only UAT and explicit approval to enable a separate experimental profile. Keep Legacy AgentDock and the current installed Next binary unchanged.
@@ -62,3 +62,31 @@ The synthetic+SQLite tests in
 suppression, prior-step ordering, trailing tool updates, Unicode, wrong
 identity/text/status/token, duplicate attempts, post-send DB mutation,
 cancel/abort behavior and independent replay behavior.
+
+## Cross-event / failure-recovery hardening (2026-10-09)
+
+The next candidate increment adds **full DB snapshot validation of previously
+ACKed text rows** before every SQLite poll and before reserving a subsequent
+external send. It seals the Translator when a previously delivered step is
+missing, duplicated, demoted from terminal status, changes kind, or has its
+text rewritten. Validation indexes acknowledged steps once and scans the DB
+snapshot in O(rows + acknowledged steps) rather than a nested scan. The
+independent `StreamDirectLedger` also treats a removed or nonterminal row
+*after ACK* as `POST_COMMIT_DIVERGENCE` instead of silently awaiting rows.
+
+`tests/agy/stream-cross-event-recovery.test.ts` uses temporary SQLite DBs,
+synthetic AGY `init`/`step_update`/`result` events and a mock unreliable
+client to exercise two-ledger delivery, Unicode chunks, missing/incomplete DB
+steps, tool-only fallback, mismatched text, partial delivery followed by
+ambiguous client error, cancellation races, resumed sessions and independent
+history replay. `tests/conversation/external-text-delivery.test.ts` adds DB
+row deletion, duplicate indices, terminal-state regression and validation
+*between* consecutive outgoing sends. No real AGY process or OAuth flow runs.
+
+**Important limitation:** this is still an offline reconciliation harness.
+The mock sender illustrates safe denial, not a solution to exactly-once delivery
+when an ACP connection loses its ACK. A completed SQLite row can be rewritten
+later and the system cannot unsend text. The Adapter still never calls the
+experimental reservation methods; Legacy and Shadow use SQLite updates.
+Promotion still requires AGY/SQLite real-event parity and a deliberately
+specified reconnect/resume protocol owned jointly with Next Core.

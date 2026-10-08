@@ -172,6 +172,24 @@ describe("offline DB-verified stream-text admission (not in ACP runtime)", () =>
 		expect(l.errorCode).toBe("POST_COMMIT_DIVERGENCE");
 		expect(l.safeToRetry).toBe(false);
 	});
+	test("a previously delivered step reverting to a nonterminal DB state is irreversible", () => {
+		const l = build(init, step("stable"), result);
+		l.verifyDb("conv", [db("stable")]);
+		l.reserve(1);
+		l.ack(1);
+		expect(l.verifyDb("conv", [db("stable", 1, 2)])).toEqual([]);
+		expect(l.errorCode).toBe("POST_COMMIT_DIVERGENCE");
+		expect(l.safeToRetry).toBe(false);
+	});
+	test("a verified and acknowledged text step disappearing from DB is terminal", () => {
+		const ledger = build(init, step("present"), result);
+		ledger.verifyDb("conv", [db("present")]);
+		expect(ledger.reserve(1)).toEqual({ stepIndex: 1, text: "present" });
+		ledger.ack(1);
+		expect(ledger.verifyDb("conv", [])).toEqual([]);
+		expect(ledger.errorCode).toBe("POST_COMMIT_DIVERGENCE");
+		expect(ledger.safeToRetry).toBe(false);
+	});
 	test("cancel and memory caps block admission", () => {
 		const l = build(init, step("x".repeat(1024 * 1024 + 1)), result);
 		expect(l.errorCode).toBe("CAPTURE_LIMIT");

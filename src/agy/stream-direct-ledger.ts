@@ -196,11 +196,20 @@ export class StreamDirectLedger {
 				);
 				return [];
 			}
-			// A mutable/incomplete DB row does not authorize direct output.
-			if (row.status !== 3) return [];
+			// A mutable/incomplete DB row does not authorize direct output;
+			// reverting a row already delivered to the client is divergence.
+			if (row.status !== 3) {
+				if (record.state === "acked") this.stop("POST_COMMIT_DIVERGENCE");
+				return [];
+			}
 		}
-		// An unobserved stream step is not evidence of a verified DB entry.
-		if (byIndex.size !== this.texts.size) return [];
+		// A missing step is not proof of completion. If it was already sent,
+		// its disappearance is an irreversible DB/source divergence.
+		if (byIndex.size !== this.texts.size) {
+			if ([...this.texts.values()].some((record) => record.state === "acked"))
+				this.stop("POST_COMMIT_DIVERGENCE");
+			return [];
+		}
 		this.verified.clear();
 		const ready: VerifiedText[] = [];
 		for (const [idx, record] of [...this.texts.entries()].sort(

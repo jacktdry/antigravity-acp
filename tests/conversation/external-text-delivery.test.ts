@@ -108,6 +108,43 @@ describe("offline handoff between verified text and the SQLite Translator", () =
 		expect(() => poller.poll()).toThrow("AGY_EXTERNAL_TEXT_DIVERGENCE");
 		expect(() => poller.poll()).toThrow("AGY_EXTERNAL_TEXT_DELIVERY_UNCERTAIN");
 	});
+	test("a previously acknowledged DB row disappearing is a non-retryable divergence", () => {
+		poller.poll();
+		add(1, "delivered");
+		const token = poller.reserveExternalText("conv", 1, "delivered");
+		poller.ackExternalText(token);
+		db.query("DELETE FROM steps WHERE idx=1").run();
+		expect(() => poller.poll()).toThrow("AGY_EXTERNAL_TEXT_DIVERGENCE");
+		expect(() => poller.poll()).toThrow("AGY_EXTERNAL_TEXT_DELIVERY_UNCERTAIN");
+	});
+	test("a completed DB row reverting to in-progress after external ACK fails closed", () => {
+		poller.poll();
+		add(1, "delivered");
+		const token = poller.reserveExternalText("conv", 1, "delivered");
+		poller.ackExternalText(token);
+		db.query("UPDATE steps SET status=2 WHERE idx=1").run();
+		expect(() => poller.poll()).toThrow("AGY_EXTERNAL_TEXT_DIVERGENCE");
+	});
+	test("duplicate DB identities after delivery cannot result in multiple text emissions", () => {
+		poller.poll();
+		add(1, "delivered");
+		const token = poller.reserveExternalText("conv", 1, "delivered");
+		poller.ackExternalText(token);
+		add(1, "delivered");
+		expect(() => poller.poll()).toThrow("AGY_EXTERNAL_TEXT_DIVERGENCE");
+	});
+	test("a second external reservation checks prior ACK even without another Poll", () => {
+		poller.poll();
+		add(1, "sent");
+		const token = poller.reserveExternalText("conv", 1, "sent");
+		poller.ackExternalText(token);
+		add(2, "next");
+		db.query("UPDATE steps SET status=2 WHERE idx=1").run();
+		expect(() => poller.reserveExternalText("conv", 2, "next")).toThrow(
+			"AGY_EXTERNAL_TEXT_DIVERGENCE",
+		);
+		expect(() => poller.poll()).toThrow("AGY_EXTERNAL_TEXT_DELIVERY_UNCERTAIN");
+	});
 	test("ambiguous external send permanently blocks automatic SQLite replay", () => {
 		poller.poll();
 		add(1, "hello");

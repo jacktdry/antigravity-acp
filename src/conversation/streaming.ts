@@ -74,6 +74,9 @@ export class StreamPoller {
 		)
 			throw new Error("AGY_EXTERNAL_TEXT_UNBOUND");
 		const rows = this.db.readAfter(this.opts.baseStepIdx);
+		// A previous external ACK may already be visible remotely. Validate the
+		// entire ledger *before* allowing another send reservation.
+		this.translator.assertExternalSnapshot(rows);
 		// Preserve ordering: every earlier SQLite step must already have been
 		// handled by this *same* Translator before text can bypass the Poller.
 		if (
@@ -108,6 +111,9 @@ export class StreamPoller {
 		}
 
 		const rows = this.db.readAfter(this.opts.baseStepIdx);
+		// Fail closed before translating *any* subsequent tool/text updates if
+		// a previously acknowledged external row disappeared or was rewritten.
+		this.translator.assertExternalSnapshot(rows);
 		this.opts.observeRows?.(this.boundId, rows);
 		for (const { stepType, error } of rows) {
 			if (
