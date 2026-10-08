@@ -6,8 +6,9 @@
 // ACP server owns its state file, and the atomic rename keeps it crash-safe.
 
 import * as fs from "node:fs";
-import { SESSIONS_FILE, STATE_DIR } from "../constants";
+import { PRIVATE_STATE, SESSIONS_FILE, STATE_DIR } from "../constants";
 import type { StoredSession } from "../types/session";
+import { readPrivateState, writePrivateState } from "./private-state";
 
 interface DiskStore {
 	sessions: Record<string, StoredSession>;
@@ -81,35 +82,40 @@ export class SessionStore {
 				if (!(sessionId in store.sessions)) return;
 				found = true;
 				delete store.sessions[sessionId];
-				fs.mkdirSync(this.dir, { recursive: true });
-				const tmp = `${this.file}.tmp`;
-				await Bun.write(tmp, JSON.stringify(store, null, 2));
-				fs.renameSync(tmp, this.file);
+				await this.writeStore(store);
 			})
 			.catch((err) => {
+				if (PRIVATE_STATE) throw err;
 				console.error(
 					`[agy-acp] WARN: failed to delete session: ${(err as Error).message}`,
 				);
 			});
-		this.writeChain = task;
+		this.writeChain = task.catch(() => {});
 		return task.then(() => found);
 	}
 
 	/** Persist a session binding. Resolves once written (writes are serialized). */
 	persist(sessionId: string, session: StoredSession): Promise<void> {
-		this.writeChain = this.writeChain
+		const task = this.writeChain
 			.then(() => this.writeOne(sessionId, session))
 			.catch((err) => {
+				if (PRIVATE_STATE) throw err;
 				console.error(
 					`[agy-acp] WARN: failed to persist session: ${(err as Error).message}`,
 				);
 			});
-		return this.writeChain;
+		this.writeChain = task.catch(() => {});
+		return task;
 	}
 
 	private async load(): Promise<DiskStore> {
+		const privateText = PRIVATE_STATE ? readPrivateState(this.file) : null;
 		try {
-			const parsed = JSON.parse(await Bun.file(this.file).text()) as {
+			const parsed = JSON.parse(
+				PRIVATE_STATE
+					? (privateText ?? "{}")
+					: await Bun.file(this.file).text(),
+			) as {
 				sessions?: Record<string, Record<string, unknown>>;
 			};
 			const raw = parsed.sessions ?? {};
@@ -119,6 +125,7 @@ export class SessionStore {
 			}
 			return { sessions };
 		} catch {
+			if (PRIVATE_STATE) throw new Error("Private ACP session state invalid");
 			return { sessions: {} };
 		}
 	}
@@ -129,6 +136,14 @@ export class SessionStore {
 	): Promise<void> {
 		const store = await this.load();
 		store.sessions[sessionId] = session;
+		await this.writeStore(store);
+	}
+
+	private async writeStore(store: DiskStore): Promise<void> {
+		if (PRIVATE_STATE) {
+			writePrivateState(this.file, JSON.stringify(store, null, 2));
+			return;
+		}
 		fs.mkdirSync(this.dir, { recursive: true });
 		const tmp = `${this.file}.tmp`;
 		await Bun.write(tmp, JSON.stringify(store, null, 2));

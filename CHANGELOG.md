@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.0-agentdock.9] - Unreleased candidate
+
+- Add opt-in private ACP state independent of HOME, with path/ownership checks,
+  no-follow reads and atomic private session/model writes.
+- Add required child HOME isolation independently of Broker bindings, preserving
+  login Keychain identity and the existing explicit conversation storage path.
+- Add disabled-auto-approval opt-in: reject extra arguments and fail closed
+  before headless prompt launch until native approval transport exists.
+- Document Next Core responsibilities and a design-only stream-json PoC matrix.
+- Set the feature-branch package to 1.2.0-agentdock.9; no deployment change.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

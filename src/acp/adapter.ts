@@ -5,6 +5,7 @@ import {
 	prepareAgyBrokerEnvironment,
 } from "../agy/browser-broker";
 import {
+	assertHeadlessApprovalSupported,
 	buildAgyArgs,
 	extraArgsFromEnv,
 	preparePromptArg,
@@ -130,6 +131,7 @@ export class Adapter {
 	): Promise<{ text: string; cancelled: boolean }> {
 		if (this.children.has(sessionId))
 			throw new Error("a prompt is already active for this session");
+		assertHeadlessApprovalSupported();
 		const brokerEnv = prepareAgyBrokerEnvironment(sessionId, broker);
 		let child: Bun.Subprocess;
 		try {
@@ -178,6 +180,7 @@ export class Adapter {
 		const effectiveCwd = session.cwd || this.config.workingDir;
 		let brokerEnv: Record<string, string> | undefined;
 		try {
+			assertHeadlessApprovalSupported();
 			brokerEnv = prepareAgyBrokerEnvironment(sessionId, broker);
 		} catch (err) {
 			return {
@@ -185,7 +188,7 @@ export class Adapter {
 				conversationId: session.conversationId,
 				lastStepIdx: session.lastStepIdx,
 				hadUpdates: false,
-				error: `failed to prepare AgentDock Browser Broker: ${(err as Error).message}`,
+				error: `failed to prepare AGY child: ${(err as Error).message}`,
 			};
 		}
 

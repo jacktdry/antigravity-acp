@@ -1,5 +1,6 @@
 import * as os from "node:os";
 import * as path from "node:path";
+import { resolveStateDir } from "../store/private-state";
 
 const HOME = os.homedir();
 
@@ -10,7 +11,8 @@ export const CONVERSATION_DIR =
 	path.join(HOME, ".gemini", "antigravity-cli", "conversations");
 
 /** Directory holding this server's persistent state (session bindings). */
-export const STATE_DIR = path.join(HOME, ".agy-acp");
+export const PRIVATE_STATE = process.env.AGY_ACP_STATE_DIR !== undefined;
+export const STATE_DIR = resolveStateDir(HOME, process.env.AGY_ACP_STATE_DIR);
 
 /** Persistent session-binding store. */
 export const SESSIONS_FILE = path.join(STATE_DIR, "sessions.json");

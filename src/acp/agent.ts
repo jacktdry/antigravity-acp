@@ -34,11 +34,13 @@ import {
 	MODEL_CONFIG_ID,
 	MODELS_CACHE_FILE,
 	PLAN_MODE_ID,
+	PRIVATE_STATE,
 	REASONING_CONFIG_ID,
 	SANDBOX_CONFIG_ID,
 	STATE_DIR,
 } from "../constants";
 import { ReplayCache } from "../conversation/replay";
+import { readPrivateState, writePrivateState } from "../store/private-state";
 import { SessionStore } from "../store/sessionStore";
 import { newSession, type Session } from "../types/session";
 import { Adapter } from "./adapter";
@@ -93,7 +95,11 @@ export class AgyAcpAgent {
 		// Attempt to load models from cache immediately for fast startup.
 		try {
 			if (fs.existsSync(MODELS_CACHE_FILE)) {
-				const cached = JSON.parse(fs.readFileSync(MODELS_CACHE_FILE, "utf-8"));
+				const cached = JSON.parse(
+					PRIVATE_STATE
+						? (readPrivateState(MODELS_CACHE_FILE) ?? "[]")
+						: fs.readFileSync(MODELS_CACHE_FILE, "utf-8"),
+				);
 				if (Array.isArray(cached) && cached.length > 0) {
 					// Normalize cached items to DiscoveredModel structure for backwards compatibility with legacy string[] cache files.
 					this.availableModels = cached.flatMap((item: unknown) => {
@@ -103,12 +109,19 @@ export class AgyAcpAgent {
 				}
 			}
 		} catch {
+			if (PRIVATE_STATE) throw new Error("Private ACP model cache unavailable");
 			// ignore
 		}
 
-		// Save initial default models cache if missing
+		// Save initial default models cache if missing.
 		try {
-			if (!fs.existsSync(MODELS_CACHE_FILE)) {
+			if (PRIVATE_STATE) {
+				if (readPrivateState(MODELS_CACHE_FILE) === null)
+					writePrivateState(
+						MODELS_CACHE_FILE,
+						JSON.stringify(this.availableModels),
+					);
+			} else if (!fs.existsSync(MODELS_CACHE_FILE)) {
 				fs.mkdirSync(STATE_DIR, { recursive: true });
 				fs.writeFileSync(
 					MODELS_CACHE_FILE,
@@ -116,7 +129,7 @@ export class AgyAcpAgent {
 				);
 			}
 		} catch {
-			// ignore
+			if (PRIVATE_STATE) throw new Error("Private ACP model cache unavailable");
 		}
 
 		// Kick off model discovery in the background; update cache and push
@@ -128,9 +141,15 @@ export class AgyAcpAgent {
 				this.availableModels = models;
 				this.pushConfigOptionUpdates();
 				try {
-					fs.mkdirSync(STATE_DIR, { recursive: true });
-					fs.writeFileSync(MODELS_CACHE_FILE, JSON.stringify(models));
+					if (PRIVATE_STATE)
+						writePrivateState(MODELS_CACHE_FILE, JSON.stringify(models));
+					else {
+						fs.mkdirSync(STATE_DIR, { recursive: true });
+						fs.writeFileSync(MODELS_CACHE_FILE, JSON.stringify(models));
+					}
 				} catch {
+					if (PRIVATE_STATE)
+						throw new Error("Private ACP model cache unavailable");
 					// ignore
 				}
 			}

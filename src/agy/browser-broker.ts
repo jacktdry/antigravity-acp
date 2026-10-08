@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createInterface } from "node:readline";
+import { CONVERSATION_DIR } from "../constants";
 
 export interface BrowserBrokerBinding {
 	url: string | null;
@@ -22,6 +23,13 @@ const COMPUTER_SERVER_NAME = "agentdock-computer";
 const BROWSER_PATH = "/internal/acp-browser/mcp";
 const COMPUTER_PATH = "/internal/acp-computer/mcp";
 const sandboxHomes = new Map<string, string>();
+
+export function childIsolationRequired(): boolean {
+	const value = process.env.AGY_ACP_CHILD_ISOLATION;
+	if (value !== undefined && value !== "required")
+		throw new Error("Invalid AGY_ACP_CHILD_ISOLATION");
+	return value === "required";
+}
 
 function brokerRequired(): boolean {
 	return process.env.AGENTDOCK_BROWSER_BROKER_REQUIRED === "1";
@@ -220,7 +228,11 @@ export function prepareAgyBrokerEnvironment(
 			throw new Error("AgentDock Browser Broker MCP is required");
 		// Older/stable AgentDock profiles set an isolated HOME but provide neither
 		// Broker flag. Never let their AGY child inherit a HOME with no login Keychain.
-		if (browserBackendsDisabled() || hasRedirectedMacOSHome())
+		if (
+			childIsolationRequired() ||
+			browserBackendsDisabled() ||
+			hasRedirectedMacOSHome()
+		)
 			return prepareChildEnvironment(sessionId, null);
 		return undefined;
 	}
@@ -239,6 +251,21 @@ function prepareChildEnvironment(
 	sessionId: string,
 	binding: BrowserBrokerBinding | null,
 ): Record<string, string> {
+	try {
+		return initializeChildEnvironment(sessionId, binding);
+	} catch (error) {
+		cleanupAgyBrokerHome(sessionId);
+		if (childIsolationRequired())
+			throw new Error("Failed to initialize required AGY child isolation");
+		throw error;
+	}
+}
+
+function initializeChildEnvironment(
+	sessionId: string,
+	binding: BrowserBrokerBinding | null,
+): Record<string, string> {
+	const required = childIsolationRequired();
 	const url = binding?.url
 		? validateControlURL(binding.url, BROWSER_PATH, BROKER_SERVER_NAME)
 		: null;
@@ -251,7 +278,12 @@ function prepareChildEnvironment(
 		: null;
 	if (binding && !/^[A-Za-z0-9._~+/-]+=*$/.test(binding.token))
 		throw new Error("Invalid Browser Broker token");
-	const sourceGemini = path.join(os.homedir(), ".gemini");
+	const loginHome =
+		required && process.platform === "darwin"
+			? macOSAccountHome()
+			: os.homedir();
+	if (!loginHome) throw new Error("Login HOME unavailable");
+	const sourceGemini = path.join(loginHome, ".gemini");
 	let sandboxHome = sandboxHomes.get(sessionId);
 	if (!sandboxHome) {
 		sandboxHome = fs.mkdtempSync(path.join(os.tmpdir(), "agy-acp-browser-"));
@@ -266,6 +298,11 @@ function prepareChildEnvironment(
 		const sourceKeychains = accountHome
 			? path.join(accountHome, "Library", "Keychains")
 			: null;
+		if (
+			required &&
+			(!sourceKeychains || !fs.statSync(sourceKeychains).isDirectory())
+		)
+			throw new Error("Login Keychains unavailable");
 		const sandboxLibrary = path.join(sandboxHome, "Library");
 		const sandboxKeychains = path.join(sandboxLibrary, "Keychains");
 		if (
@@ -283,7 +320,7 @@ function prepareChildEnvironment(
 	// Never copy global hooks, plugins, sidecars, MCP routes, or credentials embedded in them.
 	const settings = readJSON(path.join(sourceGemini, "settings.json"));
 	writeJSON(path.join(sandboxGemini, "settings.json"), {
-		security: settings.security,
+		security: required ? undefined : settings.security,
 	});
 	const proxy = selfProxyCommand();
 	const mcpServers: Record<string, unknown> = {};
@@ -324,8 +361,15 @@ function prepareChildEnvironment(
 		model: cliSettings.model,
 		colorScheme: cliSettings.colorScheme,
 	});
-	for (const name of [...SHARED_DIRECTORIES, ...SHARED_FILES]) {
-		const source = path.join(sourceState, name);
+	for (const name of required
+		? ["conversations"]
+		: [...SHARED_DIRECTORIES, ...SHARED_FILES]) {
+		const source = required ? CONVERSATION_DIR : path.join(sourceState, name);
+		if (
+			required &&
+			(!path.isAbsolute(source) || !fs.statSync(source).isDirectory())
+		)
+			throw new Error("Conversation storage unavailable");
 		const target = path.join(sandboxState, name);
 		if (fs.existsSync(target)) continue;
 		if (!fs.existsSync(source)) {

@@ -4,7 +4,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	childIsolationRequired,
 	cleanupAgyBrokerHome,
+	prepareAgyBrokerEnvironment,
 	prepareAgyModelEnvironment,
 } from "./browser-broker";
 
@@ -84,23 +86,42 @@ export interface AgyArgsOptions {
 	extraArgs?: string[];
 }
 
+export function autoApproveDisabled(): boolean {
+	const value = process.env.AGY_ACP_AUTO_APPROVE;
+	if (value !== undefined && value !== "0")
+		throw new Error("Invalid AGY_ACP_AUTO_APPROVE");
+	return value === "0";
+}
+
+/** No external native-tool approval transport exists in this adapter. */
+export function assertHeadlessApprovalSupported(): void {
+	if (autoApproveDisabled())
+		throw new Error(
+			"AGY_ACP_AUTO_APPROVE=0: headless native-tool approval is unavailable; AGY prompt launch refused",
+		);
+}
+
 /** Build the agy CLI argument vector for a single prompt turn. */
 export function buildAgyArgs(opts: AgyArgsOptions): string[] {
+	const restricted = autoApproveDisabled();
+	// Reject ALL extra tokens: no aliases, equals forms, config loaders or
+	// future upstream options can override the opt-in policy.
+	if (restricted && opts.extraArgs?.length)
+		throw new Error("AGY_EXTRA_ARGS is forbidden with AGY_ACP_AUTO_APPROVE=0");
 	const args = ["--add-dir", opts.workingDir];
 	for (const dir of opts.additionalDirs ?? []) {
 		args.push("--add-dir", dir);
 	}
 	if (opts.conversationId) args.push("--conversation", opts.conversationId);
 	if (opts.modelId) args.push("--model", opts.modelId);
-	if (opts.permissionMode === "plan") {
+	if (restricted || opts.permissionMode === "plan") {
 		args.push("--mode", "plan");
 	} else {
 		args.push("--mode", "accept-edits");
 	}
-	// Always skip permissions in ACP mode — there is no interactive
-	// terminal for the user to approve tool calls.
-	args.push("--dangerously-skip-permissions");
-	if (opts.sandbox) {
+	// Legacy always skips permissions; opt-in launch is gated separately.
+	if (!restricted) args.push("--dangerously-skip-permissions");
+	if (restricted || opts.sandbox) {
 		args.push("--sandbox");
 	}
 	args.push("--print-timeout", "0");
@@ -117,6 +138,7 @@ export function spawnAgy(
 	cwd: string,
 	env?: Record<string, string>,
 ): Bun.Subprocess<"ignore", "ignore", "pipe"> {
+	assertHeadlessApprovalSupported();
 	return Bun.spawn([binary, ...args], {
 		cwd,
 		stdin: "ignore",
@@ -129,6 +151,8 @@ export function spawnAgy(
 /** Read $AGY_EXTRA_ARGS into a token list. */
 export function extraArgsFromEnv(): string[] {
 	const raw = process.env.AGY_EXTRA_ARGS;
+	if (autoApproveDisabled() && raw?.trim())
+		throw new Error("AGY_EXTRA_ARGS is forbidden with AGY_ACP_AUTO_APPROVE=0");
 	return raw ? raw.split(/\s+/).filter((s) => s.length > 0) : [];
 }
 
@@ -138,8 +162,14 @@ export async function runNonInteractivePrompt(
 	prompt: string,
 	cwd?: string,
 ): Promise<string> {
+	const sandboxId = `noninteractive-${crypto.randomUUID()}`;
 	try {
+		assertHeadlessApprovalSupported();
+		const env = childIsolationRequired()
+			? prepareAgyBrokerEnvironment(sandboxId, null)
+			: undefined;
 		const proc = Bun.spawn([binary, "-p", prompt], {
+			env: env ? { ...process.env, ...env } : undefined,
 			cwd,
 			stdin: "ignore",
 			stdout: "pipe",
@@ -151,5 +181,7 @@ export async function runNonInteractivePrompt(
 		return text.trim();
 	} catch {
 		return "";
+	} finally {
+		cleanupAgyBrokerHome(sandboxId);
 	}
 }
