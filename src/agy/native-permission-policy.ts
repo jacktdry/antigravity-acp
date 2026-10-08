@@ -247,8 +247,14 @@ export async function evaluateNativePermissionHook(
 /** POSIX configuration fixture, not installed into any running child HOME.
  * Core must provision a trusted executable and protect configuration from tools.
  */
-export function nativePermissionHookConfig(trustedExecutable: string) {
-	if (!trustedExecutable.startsWith("/") || /[\0\r\n]/.test(trustedExecutable))
+export function nativePermissionHookConfig(
+	trustedExecutable: string,
+	trustedArgs: readonly string[] = [],
+) {
+	if (
+		!trustedExecutable.startsWith("/") ||
+		[trustedExecutable, ...trustedArgs].some((v) => /[\0\r\n]/.test(v))
+	)
 		throw new NativePermissionError(
 			"AGY_NATIVE_POLICY_INVALID",
 			"Invalid native hook executable",
@@ -262,7 +268,9 @@ export function nativePermissionHookConfig(trustedExecutable: string) {
 					hooks: [
 						{
 							type: "command",
-							command: `'${trustedExecutable.replaceAll("'", "'\\''")}'`,
+							command: [trustedExecutable, ...trustedArgs]
+								.map((v) => `'${v.replaceAll("'", "'\\''")}'`)
+								.join(" "),
 							timeout: 30,
 						},
 					],

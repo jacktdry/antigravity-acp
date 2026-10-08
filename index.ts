@@ -8,8 +8,10 @@ import { runAcp } from "./src/acp/server";
 import { downloadedAgyPath } from "./src/agy/binary";
 import { runBrowserBrokerProxyFromArgs } from "./src/agy/browser-broker";
 import { ensureAgy } from "./src/agy/installer";
+import { runNativeHookFromArgs } from "./src/agy/native-hook-runtime";
 
 async function main(): Promise<void> {
+	if (await runNativeHookFromArgs()) return;
 	if (await runBrowserBrokerProxyFromArgs()) return;
 
 	if (process.argv.includes("--version") || process.argv.includes("-v")) {
