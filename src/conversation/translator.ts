@@ -38,6 +38,15 @@ function agentChunk(text: string): SessionUpdate {
 export class Translator {
 	// Streaming: idx -> chars of agent text already emitted (for incremental diff).
 	private readonly agentTextLengths = new Map<number, number>();
+	// Optional, disabled-by-default handoff state for *externally* delivered text.
+	// Only the same live Translator may suppress those chunks from SQLite.
+	private readonly externallyDelivered = new Map<
+		number,
+		{ text: string; token: number; state: "reserved" | "acked" }
+	>();
+	private nextDeliveryToken = 0;
+	private pendingExternalToken: number | null = null;
+	private externalDeliveryFailed = false;
 	// Streaming: tool step indices already emitted (dedup across polls).
 	private readonly emittedSteps = new Set<number>();
 	// Streaming: tool steps emitted with a non-terminal status (idx -> toolCallId).
@@ -64,8 +73,77 @@ export class Translator {
 		return this._hadUpdates;
 	}
 
+	/**
+	 * Reserve a *terminal* SQLite-verified text step before an external
+	 * client.update. This never emits an ACP update. It is deliberately not
+	 * called by the current Adapter (disabled/shadow modes remain unchanged).
+	 *
+	 * The caller must serialize all deliveries against translate() until it
+	 * acknowledges the send. A failed/ambiguous send permanently seals this
+	 * Translator rather than attempting an unsafe automatic replay.
+	 */
+	reserveExternalText(row: StepRow, exactText: string): number {
+		if (
+			this.opts.mode !== "stream" ||
+			this.externalDeliveryFailed ||
+			this.pendingExternalToken !== null
+		)
+			throw new Error("AGY_EXTERNAL_TEXT_UNAVAILABLE");
+		const authoritative = row.stepPayload.agentText?.text;
+		if (
+			!Number.isSafeInteger(row.idx) ||
+			row.idx < 0 ||
+			row.stepType !== 15 ||
+			row.status !== 3 ||
+			typeof exactText !== "string" ||
+			exactText.length === 0 ||
+			authoritative !== exactText ||
+			this.agentTextLengths.has(row.idx) ||
+			this.externallyDelivered.has(row.idx) ||
+			row.idx < this._lastStepIdx ||
+			(this.opts.skipNarration && isNarration(exactText))
+		)
+			throw new Error("AGY_EXTERNAL_TEXT_UNVERIFIED");
+		const token = ++this.nextDeliveryToken;
+		this.externallyDelivered.set(row.idx, {
+			text: exactText,
+			token,
+			state: "reserved",
+		});
+		this.pendingExternalToken = token;
+		return token;
+	}
+
+	/** Only call after client.update resolves; a late ACK cannot revive a failed send. */
+	ackExternalText(token: number): void {
+		if (this.externalDeliveryFailed || this.pendingExternalToken !== token)
+			throw new Error("AGY_EXTERNAL_TEXT_DELIVERY_UNCERTAIN");
+		const record = [...this.externallyDelivered.entries()].find(
+			([, r]) => r.token === token,
+		);
+		if (record?.[1].state !== "reserved")
+			throw new Error("AGY_EXTERNAL_TEXT_DELIVERY_UNCERTAIN");
+		record[1].state = "acked";
+		this.agentTextLengths.set(record[0], record[1].text.length);
+		this._lastStepIdx = Math.max(this._lastStepIdx, record[0]);
+		this._hadUpdates = true;
+		this.pendingExternalToken = null;
+	}
+
+	/** Uncertain remote delivery is never retried through SQLite. */
+	abortExternalText(token: number): void {
+		if (this.pendingExternalToken !== token)
+			throw new Error("AGY_EXTERNAL_TEXT_DELIVERY_UNCERTAIN");
+		this.externalDeliveryFailed = true;
+		this.pendingExternalToken = null;
+	}
+
 	/** Translate a batch of rows into ordered ACP updates, advancing state. */
 	translate(rows: StepRow[]): SessionUpdate[] {
+		if (this.externalDeliveryFailed)
+			throw new Error("AGY_EXTERNAL_TEXT_DELIVERY_UNCERTAIN");
+		if (this.pendingExternalToken !== null)
+			throw new Error("AGY_EXTERNAL_TEXT_DELIVERY_PENDING");
 		const out: SessionUpdate[] = [];
 		for (const row of rows) this.translateRow(row, out);
 		// Replay groups agent text per batch; a batch ends a message boundary.
@@ -198,6 +276,17 @@ export class Translator {
 
 		if (this.opts.mode === "replay") {
 			if (text.length > 0) this.pendingAgentParts.push(text);
+			return;
+		}
+
+		// Once a verified chunk reached the client by an external source,
+		// a later SQLite rewrite cannot be treated as a harmless suffix.
+		const external = this.externallyDelivered.get(row.idx);
+		if (external) {
+			if (external.state !== "acked" || text !== external.text) {
+				this.externalDeliveryFailed = true;
+				throw new Error("AGY_EXTERNAL_TEXT_DIVERGENCE");
+			}
 			return;
 		}
 

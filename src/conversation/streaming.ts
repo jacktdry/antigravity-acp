@@ -3,11 +3,11 @@
 // newly-appended agent text and not-yet-sent tool steps on each poll.
 
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import type { StepRow } from "../types";
 import type { ErrorDetails } from "./columns";
 import { ConversationDb, ERROR_MESSAGE_STEP_TYPE } from "./database";
 import { newConversationId } from "./scan";
 import { Translator } from "./translator";
-import type { StepRow } from "../types";
 
 export interface StreamOptions {
 	dir: string;
@@ -53,6 +53,46 @@ export class StreamPoller {
 
 	get hadUpdates(): boolean {
 		return this.translator.hadUpdates;
+	}
+
+	/**
+	 * Future direct-output coordination point. This is currently unused by
+	 * Adapter.runPrompt; only a bound, already opened SQLite DB can authorize
+	 * an external reservation. The same Translator subsequently suppresses
+	 * text it has acknowledged through the other output path.
+	 */
+	reserveExternalText(
+		conversationId: string,
+		stepIndex: number,
+		exactText: string,
+	): number {
+		if (
+			this.boundId !== conversationId ||
+			!this.db ||
+			!Number.isSafeInteger(stepIndex) ||
+			stepIndex <= this.opts.baseStepIdx
+		)
+			throw new Error("AGY_EXTERNAL_TEXT_UNBOUND");
+		const rows = this.db.readAfter(this.opts.baseStepIdx);
+		// Preserve ordering: every earlier SQLite step must already have been
+		// handled by this *same* Translator before text can bypass the Poller.
+		if (
+			rows.some((r) => r.idx < stepIndex && r.idx > this.translator.lastStepIdx)
+		)
+			throw new Error("AGY_EXTERNAL_TEXT_PRIOR_STEP_PENDING");
+		const matches = rows.filter((r) => r.idx === stepIndex);
+		const candidate = matches[0];
+		if (matches.length !== 1 || !candidate)
+			throw new Error("AGY_EXTERNAL_TEXT_UNVERIFIED");
+		return this.translator.reserveExternalText(candidate, exactText);
+	}
+
+	ackExternalText(token: number): void {
+		this.translator.ackExternalText(token);
+	}
+
+	abortExternalText(token: number): void {
+		this.translator.abortExternalText(token);
 	}
 
 	/** Read steps appended since the turn began and translate the new ones. */

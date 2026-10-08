@@ -25,3 +25,40 @@ Do not introduce `AGY_ACP_STREAM_JSON=direct` or feed this prototype into `Adapt
 5. Next-only UAT and explicit approval to enable a separate experimental profile. Keep Legacy AgentDock and the current installed Next binary unchanged.
 
 Test file: `tests/agy/stream-direct-ledger.test.ts`. All tests use synthetic `PocEvent` and `StepRow` fixtures; no AGY process, authentication, external tool or live ACP transport is invoked.
+
+## Shared Translator / Poller suppression cursor (follow-up)
+
+A second, still **disabled-by-default** research increment adds methods to the
+same live `Translator` / `StreamPoller` currently serving SQLite:
+
+- `StreamPoller.reserveExternalText(conversationId, stepIndex, exactText)` checks
+  the already-open, bound conversation DB, rejects preceding unhandled steps,
+  requires one exact terminal text row, and asks its **existing** Translator
+  to reserve that text before any outbound client send.
+- `StreamPoller.ackExternalText(token)` records successful delivery. Subsequent
+  SQLite polls suppress that complete text step but continue dispatching tool
+  rows. Replay remains independently DB-backed.
+- `StreamPoller.abortExternalText(token)` permanently seals that Translator:
+  uncertain remote delivery cannot be safely undone or replayed. While
+  reserved, `poll()` refuses to emit updates; after an acknowledged send any
+  later DB edit of that text step fails closed with a fixed error code.
+
+This extends, but does **not** replace, `StreamDirectLedger`. A future
+orchestrator must coordinate the *two* reservations, serialize the outgoing
+`client.update`, confirm both ledgers only after transport success, and
+terminate/surface any delivery ambiguity without automatic retransmission.
+The current `Adapter.runPrompt` does not call these methods and does not
+expose a `direct` mode. The existing default and shadow paths are unchanged.
+
+The necessary live UAT still needs an authorization-safe AGY corpus and a
+defined recovery contract for lost transport acknowledgements. A completed
+SQLite row check does not itself prove upstream immutability and waiting for
+such rows cannot be advertised as faster first-token streaming. For this
+reason this increment is **handoff infrastructure, not a productized
+direct-stream mode**.
+
+The synthetic+SQLite tests in
+`tests/conversation/external-text-delivery.test.ts` verify exact-once
+suppression, prior-step ordering, trailing tool updates, Unicode, wrong
+identity/text/status/token, duplicate attempts, post-send DB mutation,
+cancel/abort behavior and independent replay behavior.
