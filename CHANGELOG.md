@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.0-agentdock.14] - Unreleased candidate
+
+- Harden the offline shared stream/SQLite delivery contract: validate every
+  externally acknowledged terminal SQLite row before each poll and before a
+  later send reservation. Missing, duplicate, demoted or rewritten rows
+  fail closed rather than silently continuing after a prior client delivery.
+- Keep the independent StreamDirectLedger consistent with those rules:
+  a previously ACKed row disappearing or reverting to non-terminal is
+  POST_COMMIT_DIVERGENCE; no automatic retry after uncertain delivery.
+- Add synthetic cross-event recovery and temporary SQLite tests for multi-
+  step UTF-8 text, tools, cancellation races, upstream errors, mixed partial
+  success/lost client acknowledgement, historical session resume and replay.
+  Snapshot checks are linear in row + acknowledged-step count.
+- Full test suite 456 pass / 0 fail across 43 files. Existing Legacy/default
+  and Shadow ACP runtime behavior remain unchanged; **no direct mode enabled**.
+  Source-only Next candidate, not pushed/deployed; no live AGY OAuth prompt.
+
 ## [1.2.0-agentdock.13] - Unreleased candidate
 
 - Add an opt-in-ready, **inactive** shared text suppression cursor in the
