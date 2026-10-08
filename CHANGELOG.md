@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.0-agentdock.10] - Unreleased candidate
+
+- Add a standalone, bounded AGY stream-json NDJSON parser PoC with
+  official init/step_update/result event validation, byte/queue limits,
+  multi-turn state checking, fixed redacted errors and synthetic fixture tests.
+  Production ACP prompts still use the existing SQLite poller.
+- Add a standalone native PreToolUse permission policy/Hook bridge evaluator
+  with Core-bound request identities, fail-closed mock provider decisions,
+  timeouts and no raw command/credential echo. No Core transport or Hook
+  injection is enabled, and AGY_ACP_AUTO_APPROVE=0 still denies headless runs.
+- Preserve stable AgentDock Legacy defaults; keep all new behavior opt-in
+  for a future isolated AgentDock Next integration test.
+- Source-only release candidate: not pushed or deployed to any AgentDock.
+
 ## [1.2.0-agentdock.9] - Unreleased candidate
 
 - Add opt-in private ACP state independent of HOME, with path/ownership checks,

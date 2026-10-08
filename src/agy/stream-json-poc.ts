@@ -219,7 +219,17 @@ export class StreamJsonPocParser {
 				break;
 			}
 			if (count > 0) {
-				this.line ??= new Uint8Array(MAX_EVENT_BYTES);
+				// Grow only as needed: allocating 1 MiB for each small
+				// NDJSON event creates unnecessary transient memory pressure.
+				if (!this.line || this.line.length < this.length + count) {
+					const capacity = Math.min(
+						MAX_EVENT_BYTES,
+						Math.max(256, this.length + count, (this.line?.length ?? 0) * 2),
+					);
+					const grown = new Uint8Array(capacity);
+					if (this.line) grown.set(this.line.subarray(0, this.length));
+					this.line = grown;
+				}
 				this.line.set(chunk.subarray(consumed, end), this.length);
 				this.length += count;
 			}
@@ -335,6 +345,7 @@ export class StreamJsonPocParser {
 		}
 		this.queue.push(event);
 		this.length = 0;
-		this.line = null;
+		// Reuse small buffers while releasing memory after oversized events.
+		if (this.line && this.line.length > 64 * 1024) this.line = null;
 	}
 }

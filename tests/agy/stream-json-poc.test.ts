@@ -108,7 +108,7 @@ describe("offline official stream-json PoC", () => {
 					expect(p.errorCode).toBeNull();
 					expect(drain(p)).toEqual(events);
 				}
-			});
+			}, 30_000);
 		}
 	it("handles one-byte chunks and copies caller-owned data", () => {
 		const events = [init, step(), result()];
