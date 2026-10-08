@@ -7,6 +7,7 @@ import type { ErrorDetails } from "./columns";
 import { ConversationDb, ERROR_MESSAGE_STEP_TYPE } from "./database";
 import { newConversationId } from "./scan";
 import { Translator } from "./translator";
+import type { StepRow } from "../types";
 
 export interface StreamOptions {
 	dir: string;
@@ -18,6 +19,8 @@ export interface StreamOptions {
 	cwd?: string;
 	/** Snapshot of conversation ids before the prompt, for binding a new DB. */
 	snapshot: Set<string> | null;
+	/** Optional shadow comparison; never supplies or replaces ACP updates. */
+	observeRows?: (id: string | null, rows: StepRow[]) => void;
 }
 
 export class StreamPoller {
@@ -65,6 +68,7 @@ export class StreamPoller {
 		}
 
 		const rows = this.db.readAfter(this.opts.baseStepIdx);
+		this.opts.observeRows?.(this.boundId, rows);
 		for (const { stepType, error } of rows) {
 			if (
 				error &&

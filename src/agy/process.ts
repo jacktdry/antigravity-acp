@@ -143,12 +143,13 @@ export function spawnAgy(
 	args: string[],
 	cwd: string,
 	env?: Record<string, string>,
-): Bun.Subprocess<"ignore", "ignore", "pipe"> {
+	captureStdout = false,
+): Bun.Subprocess<"ignore", "ignore" | "pipe", "pipe"> {
 	assertHeadlessApprovalSupported(env);
 	return Bun.spawn([binary, ...args], {
 		cwd,
 		stdin: "ignore",
-		stdout: "ignore",
+		stdout: captureStdout ? "pipe" : "ignore",
 		stderr: "pipe",
 		env: env ? { ...process.env, ...env } : undefined,
 	});

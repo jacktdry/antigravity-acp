@@ -12,6 +12,11 @@ import {
 	spawnAgy,
 } from "../agy/process";
 import { POLL_INTERVAL_MS } from "../constants";
+import {
+	assertShadowArgs,
+	StreamJsonCapture,
+	streamJsonMode,
+} from "../agy/stream-json-runtime";
 import type { ErrorDetails } from "../conversation/columns";
 import { conversationSnapshot } from "../conversation/scan";
 import { StreamPoller } from "../conversation/streaming";
@@ -30,6 +35,7 @@ interface ActiveChild {
 	cancelled: boolean;
 	exited: boolean;
 	timer?: ReturnType<typeof setTimeout>;
+	capture?: StreamJsonCapture;
 }
 
 /** Milliseconds until the quota resets, from "Resets in 1d2h3m4s", or null. */
@@ -86,6 +92,7 @@ export class Adapter {
 		const active = this.children.get(sessionId);
 		if (active && !active.cancelled) {
 			active.cancelled = true;
+			active.capture?.cancel();
 			if (active.exited) return;
 			const { child } = active;
 			// SIGINT allows agy to flush its DB before exiting; on Windows we fall
@@ -179,7 +186,10 @@ export class Adapter {
 		// Use the session's cwd if set, otherwise fall back to the server's workingDir.
 		const effectiveCwd = session.cwd || this.config.workingDir;
 		let brokerEnv: Record<string, string> | undefined;
+		let shadow = false;
 		try {
+			shadow = streamJsonMode();
+			if (shadow) assertShadowArgs(extraArgsFromEnv());
 			assertHeadlessApprovalSupported();
 			brokerEnv = prepareAgyBrokerEnvironment(sessionId, broker);
 		} catch (err) {
@@ -210,10 +220,11 @@ export class Adapter {
 			prompt: promptArg,
 			extraArgs: extraArgsFromEnv(),
 		});
+		if (shadow) args.unshift("--output-format", "stream-json");
 
 		let child: Bun.Subprocess;
 		try {
-			child = spawnAgy(this.config.binary, args, effectiveCwd, brokerEnv);
+			child = spawnAgy(this.config.binary, args, effectiveCwd, brokerEnv, shadow);
 		} catch (err) {
 			if (tempFilePath) {
 				try {
@@ -229,8 +240,13 @@ export class Adapter {
 			};
 		}
 		const { active, clearTimer } = this.trackChild(sessionId, child);
+		const capture = shadow
+			? new StreamJsonCapture(session.conversationId, session.lastStepIdx)
+			: undefined;
+		active.capture = capture;
 
 		try {
+			capture?.start(child.stdout as ReadableStream<Uint8Array> | null);
 			// Drain stderr concurrently (resolves when the process exits).
 			const stderrPromise = child.stderr
 				? new Response(child.stderr as ReadableStream).text()
@@ -243,6 +259,9 @@ export class Adapter {
 				skipNarration: this.config.skipNarration,
 				cwd: effectiveCwd,
 				snapshot,
+				observeRows: capture
+					? (id, rows) => capture.observeDb(id, rows)
+					: undefined,
 			});
 
 			// Serialized poll loop: emit updates in order, never overlapping.
@@ -277,6 +296,7 @@ export class Adapter {
 			})();
 
 			const exitCode = await child.exited;
+			await capture?.finish();
 			polling = false;
 			await loop;
 
@@ -324,6 +344,8 @@ export class Adapter {
 				await child.exited;
 			}
 			clearTimer();
+			await capture?.finish();
+			capture?.release();
 			if (this.children.get(sessionId) === active)
 				this.children.delete(sessionId);
 			if (tempFilePath) {
